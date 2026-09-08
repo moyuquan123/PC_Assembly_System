@@ -1,0 +1,19 @@
+{
+  "name": "@pc-assembly/database",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": {
+    "build": "node ../../node_modules/typescript/bin/tsc -b",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc --noEmit",
+    "migrate": "node --import=tsx src/migrate.ts",
+    "seed": "node --import=tsx src/seed.ts"
+  },
+  "dependencies": {
+    "@pc-assembly/domain": "0.1.0",
+    "drizzle-orm": "^0.44.5",
+    "postgres": "^3.4.7"
+  }
+}
