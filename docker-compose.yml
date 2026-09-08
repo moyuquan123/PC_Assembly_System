@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: pc_assembly
+      POSTGRES_USER: pc_assembly
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pc_assembly -d pc_assembly"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4174
+      DATABASE_URL: postgres://pc_assembly:change-me@postgres:5432/pc_assembly
+      APP_ORIGINS: http://127.0.0.1:8080
+      ADMIN_BOOTSTRAP_USERNAME: admin
+      ADMIN_BOOTSTRAP_PASSWORD: replace-before-use
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports: ["8080:80"]
+    depends_on: [api]
+volumes:
+  postgres-data:

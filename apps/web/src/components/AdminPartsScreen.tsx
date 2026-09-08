@@ -1,0 +1,38 @@
+import { ArrowLeft, CirclePlus, Pencil, Save, Search } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { categoryCodes } from "@pc-assembly/domain";
+import type { CategoryCode, Part, PartSpecs } from "@pc-assembly/domain";
+import { formatYuan } from "../lib/format";
+import { uploadPartImage } from "../lib/api";
+
+const defaultSpecs: Record<CategoryCode, PartSpecs> = {
+  cpu: { kind: "cpu", socket: "AM5", chipsetFamilies: ["B650"], tdpW: 65, maxPowerW: 88, generation: "Zen4" },
+  motherboard: { kind: "motherboard", socket: "AM5", chipset: "B650", memoryType: "DDR5", formFactor: "M-ATX", biosReviewGenerations: [], powerW: 45 },
+  gpu: { kind: "gpu", lengthMm: 250, powerW: 160 }, memory: { kind: "memory", memoryType: "DDR5", capacityMb: 32768, moduleCount: 2, powerW: 12 },
+  storage: { kind: "storage", interface: "PCIe 4.0 x4", capacityGb: 1024, powerW: 7 }, psu: { kind: "psu", ratedPowerW: 750, efficiency: "80 PLUS 金牌", modular: "全模组" },
+  case: { kind: "case", supportedFormFactors: ["ATX", "M-ATX", "ITX"], maxGpuLengthMm: 360, maxCoolerHeightMm: 170 }, cooler: { kind: "cooler", heightMm: 155, supportedSockets: ["AM5", "LGA1700"], powerW: 5 }
+};
+
+export default function AdminPartsScreen({ parts, loading, error, onSave }: { parts: Part[]; loading: boolean; error: string; onSave: (part: Omit<Part, "updatedAt">, isNew: boolean) => Promise<void> }) {
+  const navigate = useNavigate(); const { id } = useParams(); const [query, setQuery] = useState("");
+  const editing = id ? (id === "new" ? null : parts.find((part) => part.id === id)) : undefined;
+  const visible = useMemo(() => parts.filter((part) => `${part.name} ${part.brand}`.toLocaleLowerCase("zh-CN").includes(query.toLocaleLowerCase("zh-CN"))), [parts, query]);
+  if (id) return <PartEditor key={id} part={editing} isNew={id === "new"} onCancel={() => navigate("/admin/parts")} onSave={async (part, isNew) => { await onSave(part, isNew); navigate("/admin/parts"); }} />;
+  return <main className="admin-screen"><div className="admin-heading"><div><h1>配件管理</h1><p>共 {parts.length} 个配件，包含上架与下架记录。</p></div><button className="primary-button" type="button" onClick={() => navigate("/admin/parts/new")}><CirclePlus size={18} />新增配件</button></div>
+    <label className="admin-search"><Search size={18} /><span className="sr-only">搜索配件</span><input placeholder="搜索名称或品牌" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+    {loading ? <div className="page-state"><p>正在加载配件数据…</p></div> : error ? <div className="page-state error-state"><p>{error}</p></div> : <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>配件</th><th>分类</th><th>参考价</th><th>状态</th><th>更新时间</th><th><span className="sr-only">操作</span></th></tr></thead><tbody>{visible.map((part) => <tr key={part.id}><td><strong>{part.name}</strong><small>{part.id}</small></td><td>{part.category}</td><td>{formatYuan(part.priceFen)}</td><td><span className={`status-dot ${part.status}`}>{part.status === "active" ? "已上架" : "已下架"}</span></td><td>{new Date(part.updatedAt).toLocaleDateString("zh-CN")}</td><td><button type="button" onClick={() => navigate(`/admin/parts/${part.id}`)}><Pencil size={16} />编辑</button></td></tr>)}</tbody></table></div>}
+  </main>;
+}
+
+function PartEditor({ part, isNew, onCancel, onSave }: { part: Part | null | undefined; isNew: boolean; onCancel: () => void; onSave: (part: Omit<Part, "updatedAt">, isNew: boolean) => Promise<void> }) {
+  const initialCategory = part?.category ?? "cpu";
+  const [form, setForm] = useState({ id: part?.id ?? "", category: initialCategory, brand: part?.brand ?? "", model: part?.model ?? "", name: part?.name ?? "", priceYuan: part ? String(part.priceFen / 100) : "", imageUrl: part?.imageUrl ?? "", status: part?.status ?? "active", displaySpecs: part?.displaySpecs.join("，") ?? "", specs: JSON.stringify(part?.specs ?? defaultSpecs[initialCategory], null, 2) });
+  const [error, setError] = useState(""); const [saving, setSaving] = useState(false); const [imageUploading, setImageUploading] = useState(false);
+  if (!isNew && !part) return <main className="page-state error-state"><h1>没有找到该配件</h1><button type="button" onClick={onCancel}>返回列表</button></main>;
+  const submit = async (event: React.FormEvent) => { event.preventDefault(); setSaving(true); setError(""); try { const specs = JSON.parse(form.specs) as PartSpecs; await onSave({ id: form.id.trim(), category: form.category, brand: form.brand.trim(), model: form.model.trim(), name: form.name.trim() || `${form.brand.trim()} ${form.model.trim()}`, priceFen: Math.round(Number(form.priceYuan) * 100), imageUrl: form.imageUrl.trim(), status: form.status, displaySpecs: form.displaySpecs.split(/[，,]/).map((item) => item.trim()).filter(Boolean), specs }, isNew); } catch (caught) { setError(caught instanceof Error ? caught.message : "保存失败"); } finally { setSaving(false); } };
+  return <main className="admin-editor"><button className="back-button" type="button" onClick={onCancel}><ArrowLeft size={17} />返回配件列表</button><form onSubmit={(event) => void submit(event)}><div className="admin-heading"><div><h1>{isNew ? "新增配件" : "编辑配件"}</h1><p>结构化规格会直接参与兼容性判断。</p></div><button className="primary-button" type="submit" disabled={saving}><Save size={18} />{saving ? "保存中…" : "保存变更"}</button></div><div className="editor-grid">
+    <label>配件 ID<input required disabled={!isNew} value={form.id} onChange={(event) => setForm({ ...form, id: event.target.value })} /></label><label>分类<select disabled={!isNew} value={form.category} onChange={(event) => { const category = event.target.value as CategoryCode; setForm({ ...form, category, specs: JSON.stringify(defaultSpecs[category], null, 2) }); }}>{categoryCodes.map((category) => <option key={category}>{category}</option>)}</select></label>
+    <label>品牌<input required value={form.brand} onChange={(event) => setForm({ ...form, brand: event.target.value })} /></label><label>型号<input required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} /></label><label>展示名称<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label><label>参考价（元）<input required type="number" min="0" step="1" value={form.priceYuan} onChange={(event) => setForm({ ...form, priceYuan: event.target.value })} /></label><label>状态<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as Part["status"] })}><option value="active">上架</option><option value="inactive">下架</option></select></label><label>图片地址<input value={form.imageUrl} onChange={(event) => setForm({ ...form, imageUrl: event.target.value })} /></label><label className="full-field">上传产品图片<input type="file" accept="image/jpeg,image/png,image/webp" disabled={imageUploading} onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; setImageUploading(true); setError(""); try { const imageUrl = await uploadPartImage(file); setForm((current) => ({ ...current, imageUrl })); } catch (caught) { setError(caught instanceof Error ? caught.message : "图片上传失败"); } finally { setImageUploading(false); } }} /><small>{imageUploading ? "正在上传…" : "支持 JPG、PNG、WebP，最大 5MB。"}</small></label><label className="full-field">展示规格（逗号分隔）<input value={form.displaySpecs} onChange={(event) => setForm({ ...form, displaySpecs: event.target.value })} /></label><label className="full-field">结构化规格 JSON<textarea rows={12} value={form.specs} onChange={(event) => setForm({ ...form, specs: event.target.value })} /></label>
+  </div>{error ? <p className="form-error" role="alert">{error}</p> : null}</form></main>;
+}

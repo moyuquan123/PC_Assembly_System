@@ -1,0 +1,10 @@
+{
+  "name": "@pc-assembly/contracts",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": { "build": "node ../../node_modules/typescript/bin/tsc -b", "typecheck": "node ../../node_modules/typescript/bin/tsc --noEmit" },
+  "dependencies": { "zod": "^4.1.5" }
+}
