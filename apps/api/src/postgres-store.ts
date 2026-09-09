@@ -1,8 +1,9 @@
-import type { AnalyticsEventInput, BuildInput, PartsQuery, AdminPartCreate, AdminPartPatch, PublishedConfigurationInput } from "@pc-assembly/contracts";
+import type { AnalyticsEventInput, BuildInput, PartsQuery, AdminPartCreate, AdminPartPatch, PublishedConfigurationInput, UserRegistration } from "@pc-assembly/contracts";
 import type { BuildSummary, CompatibilityResult, Part, PartSpecs } from "@pc-assembly/domain";
 import postgres from "postgres";
 import type { Sql } from "postgres";
-import type { AdminSession, AdminUser, PublishedConfiguration, Store, StoredBuild } from "./store.js";
+import { calculateEngagementMetrics } from "./engagement-ranking.js";
+import type { AdminSession, AdminUser, ConfigurationComment, ConfigurationEngagement, PublishedConfiguration, Store, StoredBuild, UserAccount, UserSession } from "./store.js";
 
 interface BasePartRow {
   id: string; category: Part["category"]; brand: string; model: string; name: string;
@@ -115,7 +116,7 @@ export class PostgresStore implements Store {
 
   async listPublishedConfigurations(): Promise<PublishedConfiguration[]> {
     const rows = await this.sql<any[]>`
-      SELECT id, author_name AS "authorName", name,
+      SELECT id, owner_user_id AS "ownerUserId", author_name AS "authorName", name,
              configuration_class AS "configurationClass", description,
              selected_part_ids AS "selectedPartIds", parts_snapshot AS parts,
              checks_snapshot AS checks, summary_snapshot AS summary,
@@ -127,14 +128,26 @@ export class PostgresStore implements Store {
     return rows.map((row) => ({ ...row, createdAt: new Date(row.createdAt).toISOString() })) as PublishedConfiguration[];
   }
 
-  async savePublishedConfiguration(input: PublishedConfigurationInput, parts: Part[], checks: CompatibilityResult[], summary: BuildSummary): Promise<PublishedConfiguration> {
+  async getPublishedConfiguration(id: string): Promise<PublishedConfiguration | undefined> {
+    const [row] = await this.sql<any[]>`
+      SELECT id, owner_user_id AS "ownerUserId", author_name AS "authorName", name,
+             configuration_class AS "configurationClass", description,
+             selected_part_ids AS "selectedPartIds", parts_snapshot AS parts,
+             checks_snapshot AS checks, summary_snapshot AS summary,
+             created_at AS "createdAt"
+      FROM published_configurations WHERE id=${id}
+    `;
+    return row ? { ...row, createdAt: new Date(row.createdAt).toISOString() } as PublishedConfiguration : undefined;
+  }
+
+  async savePublishedConfiguration(input: PublishedConfigurationInput, owner: UserAccount, parts: Part[], checks: CompatibilityResult[], summary: BuildSummary): Promise<PublishedConfiguration> {
     const [row] = await this.sql<any[]>`
       INSERT INTO published_configurations
-        (anonymous_id, author_name, name, configuration_class, description, selected_part_ids, parts_snapshot, checks_snapshot, summary_snapshot)
+        (owner_user_id, author_name, name, configuration_class, description, selected_part_ids, parts_snapshot, checks_snapshot, summary_snapshot)
       VALUES
-        (${input.anonymousId}, ${input.authorName}, ${input.name}, ${input.configurationClass}, ${input.description},
+        (${owner.id}, ${owner.displayName}, ${input.name}, ${input.configurationClass}, ${input.description},
          ${this.sql.json(input.selectedPartIds)}, ${this.sql.json(parts as any)}, ${this.sql.json(checks as any)}, ${this.sql.json(summary as any)})
-      RETURNING id, author_name AS "authorName", name,
+      RETURNING id, owner_user_id AS "ownerUserId", author_name AS "authorName", name,
                 configuration_class AS "configurationClass", description,
                 selected_part_ids AS "selectedPartIds", parts_snapshot AS parts,
                 checks_snapshot AS checks, summary_snapshot AS summary,
@@ -142,6 +155,63 @@ export class PostgresStore implements Store {
     `;
     if (!row) throw new Error("CONFIGURATION_INSERT_FAILED");
     return { ...row, createdAt: new Date(row.createdAt).toISOString() } as PublishedConfiguration;
+  }
+
+  async getUserByUsername(username: string): Promise<UserAccount | undefined> { const [u] = await this.sql<any[]>`SELECT id,username,display_name AS "displayName",password_hash AS "passwordHash",status,created_at AS "createdAt" FROM user_accounts WHERE username=${username}`; return u ? { ...u, createdAt: new Date(u.createdAt).toISOString() } : undefined; }
+  async getUserById(id: string): Promise<UserAccount | undefined> { const [u] = await this.sql<any[]>`SELECT id,username,display_name AS "displayName",password_hash AS "passwordHash",status,created_at AS "createdAt" FROM user_accounts WHERE id=${id}`; return u ? { ...u, createdAt: new Date(u.createdAt).toISOString() } : undefined; }
+  async createUser(input: UserRegistration, passwordHash: string): Promise<UserAccount> {
+    try {
+      const [u] = await this.sql<any[]>`INSERT INTO user_accounts (username,display_name,password_hash) VALUES (${input.username},${input.displayName},${passwordHash}) RETURNING id,username,display_name AS "displayName",password_hash AS "passwordHash",status,created_at AS "createdAt"`;
+      return { ...u, createdAt: new Date(u.createdAt).toISOString() };
+    } catch (error: any) {
+      if (error?.code === "23505") throw new Error("USER_EXISTS");
+      throw error;
+    }
+  }
+  async createUserSession(session: UserSession): Promise<void> { await this.sql`INSERT INTO user_sessions (id_hash,user_id,expires_at) VALUES (${session.idHash},${session.userId},${session.expiresAt})`; }
+  async getUserSession(idHash: string): Promise<UserSession | undefined> { const [s] = await this.sql<any[]>`SELECT id_hash AS "idHash",user_id AS "userId",expires_at AS "expiresAt" FROM user_sessions WHERE id_hash=${idHash} AND expires_at>now()`; return s; }
+  async deleteUserSession(idHash: string): Promise<void> { await this.sql`DELETE FROM user_sessions WHERE id_hash=${idHash}`; }
+
+  async listConfigurationEngagement(keys: string[], userId?: string): Promise<ConfigurationEngagement[]> {
+    if (keys.length === 0) return [];
+    const [engagementRows, voteRows, commentRows, myVoteRows] = await Promise.all([
+      this.sql<any[]>`SELECT configuration_key AS "configurationKey", impression_count AS "impressionCount", click_count AS "clickCount" FROM configuration_engagement WHERE configuration_key IN ${this.sql(keys)}`,
+      this.sql<any[]>`SELECT configuration_key AS "configurationKey", count(*) FILTER (WHERE value=1) AS "recommendCount", count(*) FILTER (WHERE value=-1) AS "notRecommendCount" FROM configuration_votes WHERE configuration_key IN ${this.sql(keys)} GROUP BY configuration_key`,
+      this.sql<any[]>`SELECT configuration_key AS "configurationKey", count(*) AS "commentCount" FROM configuration_comments WHERE configuration_key IN ${this.sql(keys)} GROUP BY configuration_key`,
+      userId ? this.sql<any[]>`SELECT configuration_key AS "configurationKey", value FROM configuration_votes WHERE user_id=${userId} AND configuration_key IN ${this.sql(keys)}` : Promise.resolve([])
+    ]);
+    const engagement = new Map(engagementRows.map((row) => [row.configurationKey, row]));
+    const votes = new Map(voteRows.map((row) => [row.configurationKey, row]));
+    const comments = new Map(commentRows.map((row) => [row.configurationKey, row]));
+    const myVotes = new Map(myVoteRows.map((row) => [row.configurationKey, Number(row.value) as -1 | 1]));
+    return keys.map((configurationKey) => {
+      const e = engagement.get(configurationKey);
+      const v = votes.get(configurationKey);
+      const metrics = calculateEngagementMetrics({
+        recommendCount: Number(v?.recommendCount ?? 0),
+        notRecommendCount: Number(v?.notRecommendCount ?? 0),
+        commentCount: Number(comments.get(configurationKey)?.commentCount ?? 0),
+        impressionCount: Number(e?.impressionCount ?? 0),
+        clickCount: Number(e?.clickCount ?? 0)
+      });
+      return { configurationKey, ...metrics, myVote: myVotes.get(configurationKey) ?? 0 };
+    });
+  }
+  async addConfigurationImpressions(keys: string[]): Promise<void> {
+    for (const key of new Set(keys)) await this.sql`INSERT INTO configuration_engagement (configuration_key,impression_count) VALUES (${key},1) ON CONFLICT (configuration_key) DO UPDATE SET impression_count=configuration_engagement.impression_count+1,updated_at=now()`;
+  }
+  async addConfigurationClick(key: string): Promise<void> { await this.sql`INSERT INTO configuration_engagement (configuration_key,click_count) VALUES (${key},1) ON CONFLICT (configuration_key) DO UPDATE SET click_count=configuration_engagement.click_count+1,updated_at=now()`; }
+  async setConfigurationVote(key: string, userId: string, value: -1 | 0 | 1): Promise<void> {
+    if (value === 0) { await this.sql`DELETE FROM configuration_votes WHERE configuration_key=${key} AND user_id=${userId}`; return; }
+    await this.sql`INSERT INTO configuration_votes (configuration_key,user_id,value) VALUES (${key},${userId},${value}) ON CONFLICT (configuration_key,user_id) DO UPDATE SET value=EXCLUDED.value,updated_at=now()`;
+  }
+  async listConfigurationComments(key: string): Promise<ConfigurationComment[]> {
+    const rows = await this.sql<any[]>`SELECT c.id,c.configuration_key AS "configurationKey",c.content,c.created_at AS "createdAt",u.id AS "authorId",u.display_name AS "authorName" FROM configuration_comments c JOIN user_accounts u ON u.id=c.user_id WHERE c.configuration_key=${key} ORDER BY c.created_at DESC LIMIT 100`;
+    return rows.map((row) => ({ id: row.id, configurationKey: row.configurationKey, content: row.content, createdAt: new Date(row.createdAt).toISOString(), author: { id: row.authorId, displayName: row.authorName } }));
+  }
+  async addConfigurationComment(key: string, user: UserAccount, content: string): Promise<ConfigurationComment> {
+    const [row] = await this.sql<any[]>`INSERT INTO configuration_comments (configuration_key,user_id,content) VALUES (${key},${user.id},${content}) RETURNING id,configuration_key AS "configurationKey",content,created_at AS "createdAt"`;
+    return { ...row, createdAt: new Date(row.createdAt).toISOString(), author: { id: user.id, displayName: user.displayName } };
   }
 
   async getAdminByUsername(username: string): Promise<AdminUser | undefined> { const [u] = await this.sql<any[]>`SELECT id,username,password_hash AS "passwordHash",status FROM admin_users WHERE username=${username}`; return u; }

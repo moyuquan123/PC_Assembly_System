@@ -79,13 +79,24 @@ export const buildInputSchema = z.object({
 
 export const configurationClassSchema = z.enum(["办公入门", "主流游戏", "高性能游戏", "内容创作"]);
 export const publishedConfigurationInputSchema = z.object({
-  anonymousId: z.string().uuid(),
-  authorName: z.string().trim().min(1).max(40),
   name: z.string().trim().min(2).max(80),
   configurationClass: configurationClassSchema,
   description: z.string().trim().max(200).default(""),
   selectedPartIds: selectedPartIdsSchema
 });
+
+export const userRegistrationSchema = z.object({
+  username: z.string().trim().toLowerCase().regex(/^[a-z0-9_]{3,24}$/, "用户名需为 3-24 位小写字母、数字或下划线"),
+  displayName: z.string().trim().min(2).max(24),
+  password: z.string().min(8).max(72)
+});
+export const userLoginSchema = userRegistrationSchema.pick({ username: true, password: true });
+export const configurationKeySchema = z.string().regex(/^(official:[a-z0-9-]{3,80}|community:[0-9a-f-]{36})$/);
+export const configurationKeyParamsSchema = z.object({ configurationKey: configurationKeySchema });
+export const configurationEngagementQuerySchema = z.object({ keys: z.string().min(1).max(16_000) });
+export const configurationImpressionsSchema = z.object({ keys: z.array(configurationKeySchema).min(1).max(20) });
+export const configurationVoteSchema = z.object({ value: z.union([z.literal(-1), z.literal(0), z.literal(1)]) });
+export const configurationCommentSchema = z.object({ content: z.string().trim().min(1).max(500) });
 
 export const compatibilityCheckSchema = z.object({ selectedPartIds: selectedPartIdsSchema });
 export const recommendationInputSchema = z.object({
@@ -124,6 +135,9 @@ export type PartsQuery = z.infer<typeof partsQuerySchema>;
 export type BuildInput = z.infer<typeof buildInputSchema>;
 export type ConfigurationClass = z.infer<typeof configurationClassSchema>;
 export type PublishedConfigurationInput = z.infer<typeof publishedConfigurationInputSchema>;
+export type UserRegistration = z.infer<typeof userRegistrationSchema>;
+export type UserLogin = z.infer<typeof userLoginSchema>;
+export type ConfigurationVote = z.infer<typeof configurationVoteSchema>;
 export type RecommendationInput = z.infer<typeof recommendationInputSchema>;
 export type AdminLogin = z.infer<typeof adminLoginSchema>;
 export type AdminPartCreate = z.infer<typeof adminPartCreateSchema>;

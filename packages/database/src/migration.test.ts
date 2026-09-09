@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(fileURLToPath(new URL("../migrations/0000_initial.sql", import.meta.url)), "utf8");
 const publishedConfigurationsMigration = readFileSync(fileURLToPath(new URL("../migrations/0001_published_configurations.sql", import.meta.url)), "utf8");
+const communityMigration = readFileSync(fileURLToPath(new URL("../migrations/0002_community.sql", import.meta.url)), "utf8");
 
 describe("initial PostgreSQL migration", () => {
   it.each(["part_categories", "parts", "cpu_specs", "motherboard_specs", "memory_specs", "gpu_specs", "case_specs", "cooler_specs", "psu_specs", "storage_specs", "builds", "build_items", "build_check_results", "admin_users", "admin_sessions", "audit_logs", "analytics_events"])("creates %s", (table) => {
@@ -20,5 +21,17 @@ describe("initial PostgreSQL migration", () => {
     expect(publishedConfigurationsMigration).toContain("CREATE TABLE IF NOT EXISTS published_configurations");
     expect(publishedConfigurationsMigration).toContain("anonymous_id uuid NOT NULL");
     expect(publishedConfigurationsMigration).toContain("parts_snapshot jsonb NOT NULL");
+  });
+
+  it.each(["user_accounts", "user_sessions", "configuration_engagement", "configuration_votes", "configuration_comments"])("creates community table %s", (table) => {
+    expect(communityMigration).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  });
+
+  it("enforces one vote per user and indexes community foreign keys", () => {
+    expect(communityMigration).toContain("PRIMARY KEY (configuration_key, user_id)");
+    expect(communityMigration).toContain("CHECK (value IN (-1, 1))");
+    expect(communityMigration).toContain("configuration_comments_key_created_idx");
+    expect(communityMigration).toContain("user_sessions_user_idx");
+    expect(communityMigration).toContain("published_configurations_owner_idx");
   });
 });

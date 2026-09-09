@@ -1,4 +1,4 @@
-import type { AnalyticsEventInput, BuildInput, ConfigurationClass, PartsQuery, PublishedConfigurationInput, RecommendationInput } from "@pc-assembly/contracts";
+import type { AnalyticsEventInput, BuildInput, ConfigurationClass, PartsQuery, PublishedConfigurationInput, RecommendationInput, UserLogin, UserRegistration } from "@pc-assembly/contracts";
 import type { BuildSummary, Category, CompatibilityResult, Part, RecommendedBuild } from "@pc-assembly/domain";
 
 interface ApiEnvelope<T> { requestId: string; data: T; }
@@ -11,10 +11,12 @@ export class ApiClientError extends Error {
 }
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (init?.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json");
   const response = await fetch(path, {
     credentials: "same-origin",
     ...init,
-    headers: { "content-type": "application/json", ...init?.headers }
+    headers
   });
   const payload = await response.json() as ApiEnvelope<T> | ApiErrorEnvelope;
   if (!response.ok || "error" in payload) {
@@ -68,12 +70,68 @@ export interface PublishedConfigurationResponse {
   summary: BuildSummary;
 }
 
+export interface PublicUser {
+  id: string;
+  username: string;
+  displayName: string;
+  createdAt: string;
+}
+
+export interface ConfigurationEngagement {
+  configurationKey: string;
+  recommendCount: number;
+  notRecommendCount: number;
+  commentCount: number;
+  impressionCount: number;
+  clickCount: number;
+  clickRate: number;
+  hybridScore: number;
+  myVote: -1 | 0 | 1;
+}
+
+export interface ConfigurationComment {
+  id: string;
+  configurationKey: string;
+  author: { id: string; displayName: string };
+  content: string;
+  createdAt: string;
+}
+
 export function getPublishedConfigurations(): Promise<PublishedConfigurationResponse[]> {
   return apiRequest("/api/v1/configurations");
 }
 
 export function publishConfiguration(input: PublishedConfigurationInput): Promise<PublishedConfigurationResponse> {
   return apiRequest("/api/v1/configurations", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function registerUser(input: UserRegistration): Promise<PublicUser> {
+  return apiRequest("/api/v1/users", { method: "POST", body: JSON.stringify(input) });
+}
+export function loginUser(input: UserLogin): Promise<PublicUser> {
+  return apiRequest("/api/v1/user-sessions", { method: "POST", body: JSON.stringify(input) });
+}
+export function getCurrentUser(): Promise<PublicUser> { return apiRequest("/api/v1/users/me"); }
+export function logoutUser(): Promise<{ loggedOut: boolean }> { return apiRequest("/api/v1/user-sessions/current", { method: "DELETE" }); }
+export function getConfigurationEngagement(keys: string[]): Promise<ConfigurationEngagement[]> {
+  return apiRequest(`/api/v1/configuration-engagement?keys=${encodeURIComponent(keys.join(","))}`);
+}
+export async function recordConfigurationImpressions(keys: string[]): Promise<void> {
+  for (let index = 0; index < keys.length; index += 20) {
+    await apiRequest("/api/v1/configuration-impressions", { method: "POST", body: JSON.stringify({ keys: keys.slice(index, index + 20) }) });
+  }
+}
+export function recordConfigurationClick(configurationKey: string): Promise<{ accepted: boolean }> {
+  return apiRequest(`/api/v1/configurations/${encodeURIComponent(configurationKey)}/click`, { method: "POST" });
+}
+export function voteConfiguration(configurationKey: string, value: -1 | 0 | 1): Promise<ConfigurationEngagement> {
+  return apiRequest(`/api/v1/configurations/${encodeURIComponent(configurationKey)}/vote`, { method: "POST", body: JSON.stringify({ value }) });
+}
+export function getConfigurationComments(configurationKey: string): Promise<ConfigurationComment[]> {
+  return apiRequest(`/api/v1/configurations/${encodeURIComponent(configurationKey)}/comments`);
+}
+export function commentOnConfiguration(configurationKey: string, content: string): Promise<ConfigurationComment> {
+  return apiRequest(`/api/v1/configurations/${encodeURIComponent(configurationKey)}/comments`, { method: "POST", body: JSON.stringify({ content }) });
 }
 
 export interface RecommendationsResponse {

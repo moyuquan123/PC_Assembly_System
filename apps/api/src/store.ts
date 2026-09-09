@@ -7,8 +7,10 @@ import type {
   AdminPartPatch
 } from "@pc-assembly/contracts";
 import type { PublishedConfigurationInput } from "@pc-assembly/contracts";
+import type { UserRegistration } from "@pc-assembly/contracts";
 import { seedParts } from "@pc-assembly/domain";
 import type { BuildSummary, CompatibilityResult, Part } from "@pc-assembly/domain";
+import { calculateEngagementMetrics } from "./engagement-ranking.js";
 
 export interface AdminUser {
   id: string;
@@ -21,6 +23,41 @@ export interface AdminSession {
   idHash: string;
   adminUserId: string;
   expiresAt: Date;
+}
+
+export interface UserAccount {
+  id: string;
+  username: string;
+  displayName: string;
+  passwordHash: string;
+  status: "active" | "disabled";
+  createdAt: string;
+}
+
+export interface UserSession {
+  idHash: string;
+  userId: string;
+  expiresAt: Date;
+}
+
+export interface ConfigurationComment {
+  id: string;
+  configurationKey: string;
+  author: { id: string; displayName: string };
+  content: string;
+  createdAt: string;
+}
+
+export interface ConfigurationEngagement {
+  configurationKey: string;
+  recommendCount: number;
+  notRecommendCount: number;
+  commentCount: number;
+  impressionCount: number;
+  clickCount: number;
+  clickRate: number;
+  hybridScore: number;
+  myVote: -1 | 0 | 1;
 }
 
 export interface StoredBuild {
@@ -36,6 +73,7 @@ export interface StoredBuild {
 
 export interface PublishedConfiguration {
   id: string;
+  ownerUserId: string | null;
   authorName: string;
   name: string;
   configurationClass: PublishedConfigurationInput["configurationClass"];
@@ -55,7 +93,20 @@ export interface Store {
   saveBuild(shareCodeHash: string, input: BuildInput, parts: Part[], checks: CompatibilityResult[], ruleVersion: string): Promise<StoredBuild>;
   getBuildByShareHash(shareCodeHash: string): Promise<StoredBuild | undefined>;
   listPublishedConfigurations(): Promise<PublishedConfiguration[]>;
-  savePublishedConfiguration(input: PublishedConfigurationInput, parts: Part[], checks: CompatibilityResult[], summary: BuildSummary): Promise<PublishedConfiguration>;
+  getPublishedConfiguration(id: string): Promise<PublishedConfiguration | undefined>;
+  savePublishedConfiguration(input: PublishedConfigurationInput, owner: UserAccount, parts: Part[], checks: CompatibilityResult[], summary: BuildSummary): Promise<PublishedConfiguration>;
+  getUserByUsername(username: string): Promise<UserAccount | undefined>;
+  getUserById(id: string): Promise<UserAccount | undefined>;
+  createUser(input: UserRegistration, passwordHash: string): Promise<UserAccount>;
+  createUserSession(session: UserSession): Promise<void>;
+  getUserSession(idHash: string): Promise<UserSession | undefined>;
+  deleteUserSession(idHash: string): Promise<void>;
+  listConfigurationEngagement(keys: string[], userId?: string): Promise<ConfigurationEngagement[]>;
+  addConfigurationImpressions(keys: string[]): Promise<void>;
+  addConfigurationClick(key: string): Promise<void>;
+  setConfigurationVote(key: string, userId: string, value: -1 | 0 | 1): Promise<void>;
+  listConfigurationComments(key: string): Promise<ConfigurationComment[]>;
+  addConfigurationComment(key: string, user: UserAccount, content: string): Promise<ConfigurationComment>;
   getAdminByUsername(username: string): Promise<AdminUser | undefined>;
   getAdminById(id: string): Promise<AdminUser | undefined>;
   upsertAdmin(username: string, passwordHash: string): Promise<AdminUser>;
@@ -74,6 +125,11 @@ export class MemoryStore implements Store {
   private readonly publishedConfigurations = new Map<string, PublishedConfiguration>();
   private readonly users = new Map<string, AdminUser>();
   private readonly sessions = new Map<string, AdminSession>();
+  private readonly userAccounts = new Map<string, UserAccount>();
+  private readonly userSessions = new Map<string, UserSession>();
+  private readonly engagement = new Map<string, { impressions: number; clicks: number }>();
+  private readonly votes = new Map<string, -1 | 1>();
+  private readonly comments: ConfigurationComment[] = [];
   readonly audits: Array<Record<string, unknown>> = [];
   readonly events: AnalyticsEventInput[] = [];
 
@@ -131,10 +187,16 @@ export class MemoryStore implements Store {
       .map((configuration) => structuredClone(configuration));
   }
 
-  async savePublishedConfiguration(input: PublishedConfigurationInput, parts: Part[], checks: CompatibilityResult[], summary: BuildSummary): Promise<PublishedConfiguration> {
+  async getPublishedConfiguration(id: string): Promise<PublishedConfiguration | undefined> {
+    const configuration = this.publishedConfigurations.get(id);
+    return configuration ? structuredClone(configuration) : undefined;
+  }
+
+  async savePublishedConfiguration(input: PublishedConfigurationInput, owner: UserAccount, parts: Part[], checks: CompatibilityResult[], summary: BuildSummary): Promise<PublishedConfiguration> {
     const configuration: PublishedConfiguration = {
       id: randomUUID(),
-      authorName: input.authorName,
+      ownerUserId: owner.id,
+      authorName: owner.displayName,
       name: input.name,
       configurationClass: input.configurationClass,
       description: input.description,
@@ -147,6 +209,42 @@ export class MemoryStore implements Store {
     this.publishedConfigurations.set(configuration.id, configuration);
     return structuredClone(configuration);
   }
+
+  async getUserByUsername(username: string): Promise<UserAccount | undefined> {
+    return [...this.userAccounts.values()].find((user) => user.username === username);
+  }
+  async getUserById(id: string): Promise<UserAccount | undefined> { return this.userAccounts.get(id); }
+  async createUser(input: UserRegistration, passwordHash: string): Promise<UserAccount> {
+    if (await this.getUserByUsername(input.username)) throw new Error("USER_EXISTS");
+    const user: UserAccount = { id: randomUUID(), username: input.username, displayName: input.displayName, passwordHash, status: "active", createdAt: new Date().toISOString() };
+    this.userAccounts.set(user.id, user);
+    return structuredClone(user);
+  }
+  async createUserSession(session: UserSession): Promise<void> { this.userSessions.set(session.idHash, session); }
+  async getUserSession(idHash: string): Promise<UserSession | undefined> {
+    const session = this.userSessions.get(idHash);
+    if (session && session.expiresAt > new Date()) return session;
+    if (session) this.userSessions.delete(idHash);
+    return undefined;
+  }
+  async deleteUserSession(idHash: string): Promise<void> { this.userSessions.delete(idHash); }
+  async listConfigurationEngagement(keys: string[], userId?: string): Promise<ConfigurationEngagement[]> {
+    return keys.map((configurationKey) => {
+      const counts = this.engagement.get(configurationKey) ?? { impressions: 0, clicks: 0 };
+      const keyVotes = [...this.votes.entries()].filter(([key]) => key.startsWith(`${configurationKey}|`)).map(([, value]) => value);
+      const recommendCount = keyVotes.filter((value) => value === 1).length;
+      const notRecommendCount = keyVotes.filter((value) => value === -1).length;
+      const commentCount = this.comments.filter((comment) => comment.configurationKey === configurationKey).length;
+      return { configurationKey, ...calculateEngagementMetrics({ recommendCount, notRecommendCount, commentCount, impressionCount: counts.impressions, clickCount: counts.clicks }), myVote: userId ? this.votes.get(`${configurationKey}|${userId}`) ?? 0 : 0 };
+    });
+  }
+  async addConfigurationImpressions(keys: string[]): Promise<void> {
+    for (const key of new Set(keys)) { const current = this.engagement.get(key) ?? { impressions: 0, clicks: 0 }; this.engagement.set(key, { ...current, impressions: current.impressions + 1 }); }
+  }
+  async addConfigurationClick(key: string): Promise<void> { const current = this.engagement.get(key) ?? { impressions: 0, clicks: 0 }; this.engagement.set(key, { ...current, clicks: current.clicks + 1 }); }
+  async setConfigurationVote(key: string, userId: string, value: -1 | 0 | 1): Promise<void> { const voteKey = `${key}|${userId}`; if (value === 0) this.votes.delete(voteKey); else this.votes.set(voteKey, value); }
+  async listConfigurationComments(key: string): Promise<ConfigurationComment[]> { return this.comments.filter((comment) => comment.configurationKey === key).toSorted((a, b) => b.createdAt.localeCompare(a.createdAt)).map((comment) => structuredClone(comment)); }
+  async addConfigurationComment(key: string, user: UserAccount, content: string): Promise<ConfigurationComment> { const comment = { id: randomUUID(), configurationKey: key, author: { id: user.id, displayName: user.displayName }, content, createdAt: new Date().toISOString() }; this.comments.push(comment); return structuredClone(comment); }
 
   async getAdminByUsername(username: string): Promise<AdminUser | undefined> {
     return [...this.users.values()].find((user) => user.username === username);

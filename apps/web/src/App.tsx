@@ -14,7 +14,9 @@ import PartsOverviewScreen from "./components/PartsOverviewScreen";
 import SavedScreen from "./components/SavedScreen";
 import SetupScreen from "./components/SetupScreen";
 import SharedBuildScreen from "./components/SharedBuildScreen";
-import { ApiClientError, createAdminPart, createSharedBuild, getAdminParts, getCategories, getParts, getSharedBuild, loginAdmin, publishConfiguration, sendEvent, updateAdminPart } from "./lib/api";
+import UserAccountModal from "./components/UserAccountModal";
+import { ApiClientError, createAdminPart, createSharedBuild, getAdminParts, getCategories, getCurrentUser, getParts, getSharedBuild, loginAdmin, publishConfiguration, sendEvent, updateAdminPart } from "./lib/api";
+import type { PublicUser } from "./lib/api";
 import { createDraft, DRAFT_STORAGE_KEY, readDraft, updateSelection, updateSetup, writeDraft } from "./lib/draft";
 import { formatYuan } from "./lib/format";
 import type { MarketConfiguration } from "./lib/configuration-library";
@@ -35,10 +37,13 @@ function errorMessage(error: unknown): string {
 
 export default function App() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const initial = useMemo(() => readDraft(window.localStorage), []);
   const [draft, setDraft] = useState<BuildDraft>(initial.draft);
   const [savedDraft, setSavedDraft] = useState<BuildDraft | null>(() => window.localStorage.getItem(DRAFT_STORAGE_KEY) && !initial.recoveryMessage ? initial.draft : null);
   const [toast, setToast] = useState(initial.recoveryMessage ?? "");
+  const [accountOpen, setAccountOpen] = useState(false);
+  const userQuery = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
   const partsQuery = useQuery({ queryKey: ["parts"], queryFn: () => getParts() });
   useQuery({ queryKey: ["categories"], queryFn: getCategories });
   const parts = partsQuery.data ?? [];
@@ -86,17 +91,19 @@ export default function App() {
     navigate("/builder");
   };
   const uploadConfiguration = async (fields: ConfigurationSubmissionFields) => {
-    const published = await publishConfiguration({ ...fields, anonymousId: getAnonymousId(), selectedPartIds: draft.selectedPartIds });
+    const published = await publishConfiguration({ ...fields, selectedPartIds: draft.selectedPartIds });
     showToast("配置已通过检查并发布");
     track({ eventName: "configuration_published", properties: { configurationClass: fields.configurationClass, totalRange: budgetRange(published.summary.totalFen) } });
   };
 
-  return <div className="app-shell"><AppHeader onSave={saveCurrent} />
+  const setAuthenticatedUser = (user: PublicUser) => { queryClient.setQueryData(["current-user"], user); };
+
+  return <div className="app-shell"><AppHeader onSave={saveCurrent} user={userQuery.data} onAccount={() => setAccountOpen(true)} />
     <Routes>
       <Route path="/" element={<SetupScreen draft={draft} hasSavedDraft={Boolean(savedDraft)} onStart={start} onContinue={() => { if (savedDraft) setDraft(savedDraft); navigate("/builder"); }} />} />
       <Route path="/builder" element={<BuilderScreen draft={draft} parts={parts} loading={partsQuery.isLoading} error={partsQuery.error ? errorMessage(partsQuery.error) : ""} onChoose={choose} onEditSetup={() => navigate("/")} onCopy={copyBuild} onShare={shareBuild} />} />
       <Route path="/configurations" element={<PartsOverviewScreen parts={parts} loading={partsQuery.isLoading} error={partsQuery.error ? errorMessage(partsQuery.error) : ""} onStart={() => navigate("/")} />} />
-      <Route path="/recommend" element={<ConfigurationLibraryScreen parts={parts} draft={draft} loading={partsQuery.isLoading} error={partsQuery.error ? errorMessage(partsQuery.error) : ""} onApply={applyLibraryConfiguration} onStart={() => navigate("/builder")} onPublish={uploadConfiguration} />} />
+      <Route path="/recommend" element={<ConfigurationLibraryScreen parts={parts} draft={draft} user={userQuery.data} loading={partsQuery.isLoading} error={partsQuery.error ? errorMessage(partsQuery.error) : ""} onApply={applyLibraryConfiguration} onStart={() => navigate("/builder")} onPublish={uploadConfiguration} onRequireAccount={() => setAccountOpen(true)} />} />
       <Route path="/saved" element={<SavedScreen savedDraft={savedDraft} parts={parts} onOpen={() => { if (savedDraft) setDraft(savedDraft); navigate("/builder"); }} onStart={() => navigate("/")} />} />
       <Route path="/builds/:shareCode" element={<SharedRoute />} />
       <Route path="/admin/login" element={<AdminLoginScreen onLogin={async (username, password) => { await loginAdmin(username, password); navigate("/admin/parts"); }} />} />
@@ -104,6 +111,7 @@ export default function App() {
       <Route path="/admin/parts/:id" element={<AdminRoute />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    <UserAccountModal open={accountOpen} user={userQuery.data} onClose={() => setAccountOpen(false)} onAuthenticated={setAuthenticatedUser} onLoggedOut={() => { queryClient.setQueryData(["current-user"], undefined); }} />
     <div className={toast ? "toast visible" : "toast"} role="status">{toast}</div>
   </div>;
 }

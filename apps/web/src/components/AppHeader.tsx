@@ -1,11 +1,12 @@
-import { FolderOpen, LogIn, Save } from "lucide-react";
+import { FolderOpen, Save, UserRound } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import type { PublicUser } from "../lib/api";
 
 function BrandMark() {
   return <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>;
 }
 
-export default function AppHeader({ onSave }: { onSave: () => void }) {
+export default function AppHeader({ onSave, user, onAccount }: { onSave: () => void; user: PublicUser | undefined; onAccount: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const isBuilder = location.pathname === "/builder";
@@ -24,10 +25,11 @@ export default function AppHeader({ onSave }: { onSave: () => void }) {
       </nav>
       {isAdmin ? (
         <button className="header-action" type="button" onClick={() => navigate("/")}><FolderOpen size={18} /><span>返回装机</span></button>
-      ) : isBuilder ? (
-        <button className="header-action" type="button" onClick={onSave}><Save size={18} /><span>保存配置</span></button>
       ) : (
-        <button className="header-action" type="button" onClick={() => navigate("/admin/login")}><LogIn size={18} /><span>管理后台</span></button>
+        <div className="header-actions">
+          {isBuilder ? <button className="header-action secondary" type="button" onClick={onSave}><Save size={18} /><span>保存配置</span></button> : <button className="admin-entry" type="button" onClick={() => navigate("/admin/login")}>管理后台</button>}
+          <button className="header-account" type="button" onClick={onAccount}><UserRound size={19} /><span>{user?.displayName ?? "登录 / 注册"}</span></button>
+        </div>
       )}
     </header>
   );

@@ -7,6 +7,12 @@ import {
   adminPartPatchSchema,
   analyticsEventSchema,
   buildInputSchema,
+  configurationCommentSchema,
+  configurationEngagementQuerySchema,
+  configurationImpressionsSchema,
+  configurationKeyParamsSchema,
+  configurationKeySchema,
+  configurationVoteSchema,
   compatibilityCheckSchema,
   imageUploadRequestSchema,
   partIdParamsSchema,
@@ -14,7 +20,9 @@ import {
   partsQuerySchema,
   publishedConfigurationInputSchema,
   recommendationInputSchema,
-  shareCodeParamsSchema
+  shareCodeParamsSchema,
+  userLoginSchema,
+  userRegistrationSchema
 } from "@pc-assembly/contracts";
 import type { AnalyticsEventInput } from "@pc-assembly/contracts";
 import {
@@ -31,13 +39,13 @@ import Fastify, { LogController } from "fastify";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ZodType } from "zod";
 import { ApiError } from "./errors.js";
-import { createOpaqueToken, hashToken, SESSION_COOKIE, SESSION_TTL_MS } from "./security.js";
+import { createOpaqueToken, hashToken, SESSION_COOKIE, SESSION_TTL_MS, USER_SESSION_COOKIE, USER_SESSION_TTL_MS } from "./security.js";
 import { MemoryStore } from "./store.js";
-import type { AdminUser, Store } from "./store.js";
+import type { AdminUser, Store, UserAccount } from "./store.js";
 import type { ImageStorage } from "./image-storage.js";
 
 declare module "fastify" {
-  interface FastifyRequest { admin?: AdminUser; }
+  interface FastifyRequest { admin?: AdminUser; user?: UserAccount; }
 }
 
 export interface AppOptions {
@@ -155,6 +163,9 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     if (error instanceof Error && error.message === "PART_ID_EXISTS") {
       return reply.status(409).send({ requestId: request.id, error: { code: "PART_ID_EXISTS", message: "配件 ID 已存在。" } });
     }
+    if (error instanceof Error && error.message === "USER_EXISTS") {
+      return reply.status(409).send({ requestId: request.id, error: { code: "USER_EXISTS", message: "该用户名已被注册。" } });
+    }
     request.log.error(error);
     return reply.status(500).send({ requestId: request.id, error: { code: "INTERNAL_ERROR", message: "服务暂时不可用。" } });
   });
@@ -166,6 +177,20 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     const admin = session ? await store.getAdminById(session.adminUserId) : undefined;
     if (!admin || admin.status !== "active") throw new ApiError(401, "ADMIN_SESSION_INVALID", "管理员会话已失效。");
     request.admin = admin;
+  }
+
+  async function resolveUser(request: FastifyRequest): Promise<UserAccount | undefined> {
+    const token = request.cookies[USER_SESSION_COOKIE];
+    if (!token) return undefined;
+    const session = await store.getUserSession(hashToken(token));
+    const user = session ? await store.getUserById(session.userId) : undefined;
+    return user?.status === "active" ? user : undefined;
+  }
+
+  async function requireUser(request: FastifyRequest): Promise<void> {
+    const user = await resolveUser(request);
+    if (!user) throw new ApiError(401, "USER_AUTH_REQUIRED", "请先登录后再进行此操作。");
+    request.user = user;
   }
 
   async function requireSameOrigin(request: FastifyRequest): Promise<void> {
@@ -230,8 +255,77 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.get("/api/v1/configurations", { schema: { response: responseSchema } }, async (request) => {
     return data(request, await store.listPublishedConfigurations());
   });
+  app.post("/api/v1/users", { preHandler: requireSameOrigin, config: { rateLimit: { max: 5, timeWindow: "10 minutes" } }, schema: { response: responseSchema } }, async (request, reply) => {
+    const input = parse(userRegistrationSchema, request.body);
+    const passwordHash = await hash(input.password, { memoryCost: 19_456, timeCost: 2, parallelism: 1 });
+    const user = await store.createUser(input, passwordHash);
+    const token = createOpaqueToken();
+    await store.createUserSession({ idHash: hashToken(token), userId: user.id, expiresAt: new Date(Date.now() + USER_SESSION_TTL_MS) });
+    reply.setCookie(USER_SESSION_COOKIE, token, { path: "/api/v1", httpOnly: true, secure: options.production ?? false, sameSite: "strict", maxAge: USER_SESSION_TTL_MS / 1000 });
+    reply.status(201);
+    return data(request, publicUser(user));
+  });
+  app.post("/api/v1/user-sessions", { preHandler: requireSameOrigin, config: { rateLimit: { max: 8, timeWindow: "5 minutes" } }, schema: { response: responseSchema } }, async (request, reply) => {
+    const input = parse(userLoginSchema, request.body);
+    const user = await store.getUserByUsername(input.username);
+    const valid = user?.status === "active" && await verify(user.passwordHash, input.password);
+    if (!valid || !user) throw new ApiError(401, "USER_CREDENTIALS_INVALID", "用户名或密码不正确。");
+    const token = createOpaqueToken();
+    await store.createUserSession({ idHash: hashToken(token), userId: user.id, expiresAt: new Date(Date.now() + USER_SESSION_TTL_MS) });
+    reply.setCookie(USER_SESSION_COOKIE, token, { path: "/api/v1", httpOnly: true, secure: options.production ?? false, sameSite: "strict", maxAge: USER_SESSION_TTL_MS / 1000 });
+    return data(request, publicUser(user));
+  });
+  app.get("/api/v1/users/me", { preHandler: requireUser, schema: { response: responseSchema } }, async (request) => data(request, publicUser(request.user!)));
+  app.delete("/api/v1/user-sessions/current", { preHandler: [requireUser, requireSameOrigin], schema: { response: responseSchema } }, async (request, reply) => {
+    const token = request.cookies[USER_SESSION_COOKIE];
+    if (token) await store.deleteUserSession(hashToken(token));
+    reply.clearCookie(USER_SESSION_COOKIE, { path: "/api/v1" });
+    return data(request, { loggedOut: true });
+  });
+  app.get("/api/v1/configuration-engagement", { schema: { response: responseSchema } }, async (request) => {
+    const { keys: rawKeys } = parse(configurationEngagementQuerySchema, request.query);
+    const keys = [...new Set(rawKeys.split(",").filter(Boolean).map((key) => parse(configurationKeySchema, key)))];
+    if (keys.length > 250) throw new ApiError(400, "VALIDATION_FAILED", "一次最多查询 250 套配置。");
+    await Promise.all(keys.map((key) => assertConfigurationExists(key, store)));
+    const user = await resolveUser(request);
+    return data(request, await store.listConfigurationEngagement(keys, user?.id));
+  });
+  app.post("/api/v1/configuration-impressions", { preHandler: requireSameOrigin, config: { rateLimit: { max: 30, timeWindow: "1 minute" } }, schema: { response: responseSchema } }, async (request, reply) => {
+    const { keys } = parse(configurationImpressionsSchema, request.body);
+    await Promise.all(keys.map((key) => assertConfigurationExists(key, store)));
+    await store.addConfigurationImpressions(keys);
+    reply.status(201);
+    return data(request, { accepted: keys.length });
+  });
+  app.post("/api/v1/configurations/:configurationKey/click", { preHandler: requireSameOrigin, config: { rateLimit: { max: 60, timeWindow: "1 minute" } }, schema: { response: responseSchema } }, async (request, reply) => {
+    const { configurationKey } = parse(configurationKeyParamsSchema, request.params);
+    await assertConfigurationExists(configurationKey, store);
+    await store.addConfigurationClick(configurationKey);
+    reply.status(201);
+    return data(request, { accepted: true });
+  });
+  app.post("/api/v1/configurations/:configurationKey/vote", { preHandler: [requireUser, requireSameOrigin], config: { rateLimit: { max: 30, timeWindow: "1 minute" } }, schema: { response: responseSchema } }, async (request) => {
+    const { configurationKey } = parse(configurationKeyParamsSchema, request.params);
+    const { value } = parse(configurationVoteSchema, request.body);
+    await assertConfigurationExists(configurationKey, store);
+    await store.setConfigurationVote(configurationKey, request.user!.id, value);
+    return data(request, (await store.listConfigurationEngagement([configurationKey], request.user!.id))[0]);
+  });
+  app.get("/api/v1/configurations/:configurationKey/comments", { schema: { response: responseSchema } }, async (request) => {
+    const { configurationKey } = parse(configurationKeyParamsSchema, request.params);
+    await assertConfigurationExists(configurationKey, store);
+    return data(request, await store.listConfigurationComments(configurationKey));
+  });
+  app.post("/api/v1/configurations/:configurationKey/comments", { preHandler: [requireUser, requireSameOrigin], config: { rateLimit: { max: 10, timeWindow: "5 minutes" } }, schema: { response: responseSchema } }, async (request, reply) => {
+    const { configurationKey } = parse(configurationKeyParamsSchema, request.params);
+    const { content } = parse(configurationCommentSchema, request.body);
+    await assertConfigurationExists(configurationKey, store);
+    const comment = await store.addConfigurationComment(configurationKey, request.user!, content);
+    reply.status(201);
+    return data(request, comment);
+  });
   app.post("/api/v1/configurations", {
-    preHandler: requireSameOrigin,
+    preHandler: [requireUser, requireSameOrigin],
     config: { rateLimit: { max: 8, timeWindow: "10 minutes" } },
     schema: { response: responseSchema }
   }, async (request, reply) => {
@@ -245,7 +339,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     if (checks.some((check) => check.level === "incompatible")) {
       throw new ApiError(409, "CONFIGURATION_INCOMPATIBLE", "当前配置存在明确冲突，无法上传。", { checks });
     }
-    const stored = await store.savePublishedConfiguration(input, parts, checks, summarizeBuild(snapshot));
+    const stored = await store.savePublishedConfiguration(input, request.user!, parts, checks, summarizeBuild(snapshot));
     reply.status(201);
     return data(request, stored);
   });
@@ -316,4 +410,20 @@ async function resolveParts(selectedPartIds: SelectedPartIdsInput, store: Store)
   const mismatched = parts.find((part) => selectedPartIds[part.category] !== part.id);
   if (mismatched) throw new ApiError(400, "VALIDATION_FAILED", "配件分类与选择项不一致。");
   return parts;
+}
+
+const officialConfigurationIds = new Set([
+  "amd-office-entry", "intel-office-entry", "amd-mainstream-gaming", "intel-mainstream-gaming",
+  "amd-high-end-gaming", "intel-high-end-gaming", "amd-content-creation", "intel-content-creation"
+]);
+
+async function assertConfigurationExists(key: string, store: Store): Promise<void> {
+  const [source, id] = key.split(":");
+  if (source === "official" && id && officialConfigurationIds.has(id)) return;
+  if (source === "community" && id && await store.getPublishedConfiguration(id)) return;
+  throw new ApiError(404, "CONFIGURATION_NOT_FOUND", "没有找到该配置方案。");
+}
+
+function publicUser(user: UserAccount) {
+  return { id: user.id, username: user.username, displayName: user.displayName, createdAt: user.createdAt };
 }

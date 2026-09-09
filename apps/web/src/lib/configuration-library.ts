@@ -7,6 +7,7 @@ export type PlatformBrand = "AMD" | "Intel";
 
 export interface MarketConfiguration {
   id: string;
+  engagementKey: string;
   name: string;
   platform: PlatformBrand;
   configurationClass: ConfigurationClass;
@@ -47,6 +48,7 @@ export function createConfigurationLibrary(catalog: Part[]): MarketConfiguration
     const summary = summarizeBuild(snapshot);
     return [{
       ...definition,
+      engagementKey: `official:${definition.id}`,
       summary,
       checks: checkCompatibility(snapshot),
       referenceBudgetFen: Math.ceil(summary.totalFen / 50_000) * 50_000,

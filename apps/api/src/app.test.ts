@@ -34,6 +34,17 @@ async function testApp(imageStorage?: ImageStorage) {
   return { app, store };
 }
 
+async function registerUser(app: FastifyInstance, username = "pc_fan", displayName = "小明") {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/users",
+    headers: { origin: "http://127.0.0.1:4173" },
+    payload: { username, displayName, password: "Password123!" }
+  });
+  const setCookie = response.headers["set-cookie"];
+  return { response, cookie: (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(";")[0] };
+}
+
 describe("public API", () => {
   it("serves categories and filters active catalog parts", async () => {
     const { app } = await testApp();
@@ -89,13 +100,12 @@ describe("public API", () => {
 
   it("publishes and lists a complete compatible user configuration", async () => {
     const { app } = await testApp();
+    const { cookie } = await registerUser(app);
     const response = await app.inject({
       method: "POST",
       url: "/api/v1/configurations",
-      headers: { origin: "http://127.0.0.1:4173" },
+      headers: { origin: "http://127.0.0.1:4173", cookie: cookie! },
       payload: {
-        anonymousId: "27a25667-b7a0-4fc1-8c29-b0be0e7a250d",
-        authorName: "小明",
         name: "我的 2K 游戏主机",
         configurationClass: "主流游戏",
         description: "兼顾游戏性能与升级空间。",
@@ -116,25 +126,74 @@ describe("public API", () => {
 
   it("blocks incomplete or incompatible user configurations", async () => {
     const { app } = await testApp();
+    const { cookie } = await registerUser(app, "builder_user", "测试用户");
     const base = {
-      anonymousId: "27a25667-b7a0-4fc1-8c29-b0be0e7a250d",
-      authorName: "测试用户",
       name: "待检查配置",
       configurationClass: "主流游戏",
       description: ""
     };
-    const incomplete = await app.inject({ method: "POST", url: "/api/v1/configurations", headers: { origin: "http://127.0.0.1:4173" }, payload: { ...base, selectedPartIds: { cpu: "cpu-7600x" } } });
+    const incomplete = await app.inject({ method: "POST", url: "/api/v1/configurations", headers: { origin: "http://127.0.0.1:4173", cookie: cookie! }, payload: { ...base, selectedPartIds: { cpu: "cpu-7600x" } } });
     expect(incomplete.statusCode).toBe(400);
     expect(incomplete.json().error.code).toBe("CONFIGURATION_INCOMPLETE");
 
     const incompatible = await app.inject({
       method: "POST",
       url: "/api/v1/configurations",
-      headers: { origin: "http://127.0.0.1:4173" },
+      headers: { origin: "http://127.0.0.1:4173", cookie: cookie! },
       payload: { ...base, selectedPartIds: { ...completeBuild.selectedPartIds, motherboard: "mb-b760" } }
     });
     expect(incompatible.statusCode).toBe(409);
     expect(incompatible.json().error.code).toBe("CONFIGURATION_INCOMPATIBLE");
+  });
+
+  it("registers, restores, logs in and rejects a duplicate user account", async () => {
+    const { app } = await testApp();
+    const { response, cookie } = await registerUser(app);
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data).toEqual(expect.objectContaining({ username: "pc_fan", displayName: "小明" }));
+    expect(response.json().data.passwordHash).toBeUndefined();
+
+    const current = await app.inject({ method: "GET", url: "/api/v1/users/me", headers: { cookie: cookie! } });
+    expect(current.statusCode).toBe(200);
+    const duplicate = await registerUser(app);
+    expect(duplicate.response.statusCode).toBe(409);
+
+    const login = await app.inject({ method: "POST", url: "/api/v1/user-sessions", headers: { origin: "http://127.0.0.1:4173" }, payload: { username: "pc_fan", password: "Password123!" } });
+    expect(login.statusCode).toBe(200);
+    const loginCookieHeader = login.headers["set-cookie"];
+    const loginCookie = (Array.isArray(loginCookieHeader) ? loginCookieHeader[0] : loginCookieHeader)?.split(";")[0];
+    const logout = await app.inject({ method: "DELETE", url: "/api/v1/user-sessions/current", headers: { origin: "http://127.0.0.1:4173", cookie: loginCookie! } });
+    expect(logout.statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/api/v1/users/me", headers: { cookie: loginCookie! } })).statusCode).toBe(401);
+  });
+
+  it("tracks impressions and clicks, then enforces one mutable vote and authenticated comments", async () => {
+    const { app } = await testApp();
+    const key = "official:amd-mainstream-gaming";
+    const { cookie } = await registerUser(app, "reviewer", "装机评测员");
+    const headers = { origin: "http://127.0.0.1:4173", cookie: cookie! };
+
+    expect((await app.inject({ method: "POST", url: "/api/v1/configuration-impressions", headers, payload: { keys: [key] } })).statusCode).toBe(201);
+    expect((await app.inject({ method: "POST", url: `/api/v1/configurations/${key}/click`, headers })).statusCode).toBe(201);
+    await app.inject({ method: "POST", url: `/api/v1/configurations/${key}/vote`, headers, payload: { value: 1 } });
+    await app.inject({ method: "POST", url: `/api/v1/configurations/${key}/vote`, headers, payload: { value: -1 } });
+
+    const comment = await app.inject({ method: "POST", url: `/api/v1/configurations/${key}/comments`, headers, payload: { content: "散热和电源余量都很合理。" } });
+    expect(comment.statusCode).toBe(201);
+    const comments = await app.inject({ method: "GET", url: `/api/v1/configurations/${key}/comments` });
+    expect(comments.json().data).toEqual([expect.objectContaining({ content: "散热和电源余量都很合理。" })]);
+
+    const metrics = await app.inject({ method: "GET", url: `/api/v1/configuration-engagement?keys=${encodeURIComponent(key)}`, headers: { cookie: cookie! } });
+    expect(metrics.json().data[0]).toEqual(expect.objectContaining({ recommendCount: 0, notRecommendCount: 1, commentCount: 1, impressionCount: 1, clickCount: 1, clickRate: 1, myVote: -1 }));
+  });
+
+  it("requires login for publishing, voting and commenting", async () => {
+    const { app } = await testApp();
+    const key = "official:amd-office-entry";
+    const headers = { origin: "http://127.0.0.1:4173" };
+    expect((await app.inject({ method: "POST", url: `/api/v1/configurations/${key}/vote`, headers, payload: { value: 1 } })).statusCode).toBe(401);
+    expect((await app.inject({ method: "POST", url: `/api/v1/configurations/${key}/comments`, headers, payload: { content: "测试" } })).statusCode).toBe(401);
+    expect((await app.inject({ method: "POST", url: "/api/v1/configurations", headers, payload: { name: "测试配置", configurationClass: "主流游戏", description: "", selectedPartIds: completeBuild.selectedPartIds } })).statusCode).toBe(401);
   });
 });
 

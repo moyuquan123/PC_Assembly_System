@@ -1,7 +1,7 @@
 # PC 装机系统 MVP 技术方案
 
 - 文档版本：v1.0
-- 对应产品版本：MVP v0.2（第一版更新）
+- 对应产品版本：MVP v0.3（社区互动更新）
 - 更新时间：2026-09-08
 - 适用区域：中国大陆
 - 文档状态：实现与验证中
@@ -34,7 +34,8 @@
 - 支持八类核心配件选择、即时预算和功耗汇总。
 - 对产品文档列出的兼容规则给出兼容、警告或不兼容结论。
 - 支持匿名用户本地草稿、服务端配置保存和不可枚举的分享链接。
-- 支持按配件类别与品牌浏览目录，并将通过完整性和兼容检查的匿名用户配置公开投稿。
+- 支持按配件类别与品牌浏览目录，并将通过完整性和兼容检查的登录用户配置公开投稿。
+- 支持普通用户注册、登录、评论、推荐/不推荐、展示与点击统计及混合排序。
 - 支持管理员维护配件、价格、结构化规格和上下架状态。
 - 根据预算、用途和偏好生成三套完整、可解释且经过兼容复核的推荐方案。
 - 支持桌面端和移动端，核心交互具备自动化回归测试。
@@ -46,7 +47,7 @@
 - 不拆分微服务，不引入 Kubernetes。
 - 不引入 Redis、Kafka、Elasticsearch；出现经过测量的瓶颈后再评估。
 - 不实现通用的可视化兼容规则编辑器。
-- 不实现普通用户复杂账号体系；首期仅要求管理员登录。
+- 不实现关注、私信、等级、第三方登录和复杂用户角色体系。
 - 不实现开放式多轮 AI 对话、价格爬虫、支付、订单和电商跳转归因。
 - 不把兼容性判断交给大语言模型。
 
@@ -131,6 +132,8 @@ tests/
 - `recommendations`：约束搜索、用途评分、方案解释与推荐版本。
 - `builds`：配置保存、分享和读取。
 - `published-configurations`：用户配置投稿、服务端复核和公开列表。
+- `user-auth`：普通用户注册、登录、会话和退出。
+- `configuration-community`：评论、单用户投票、展示/点击计数与混合评分。
 - `admin-auth`：管理员登录、会话和退出。
 - `admin-catalog`：配件新增、编辑、上下架和图片管理。
 - `analytics`：匿名产品事件采集。
@@ -148,7 +151,17 @@ tests/
 | `POST /api/v1/builds` | 保存并生成分享码 | 公开、限流 |
 | `GET /api/v1/builds/:shareCode` | 获取分享配置 | 公开 |
 | `GET /api/v1/configurations` | 获取用户投稿的完整配置 | 公开 |
-| `POST /api/v1/configurations` | 检查并发布当前完整配置 | 公开、同源校验、严格限流 |
+| `POST /api/v1/configurations` | 检查并发布当前完整配置 | 登录用户、同源校验、严格限流 |
+| `POST /api/v1/users` | 注册普通用户并创建会话 | 公开、同源校验、严格限流 |
+| `POST /api/v1/user-sessions` | 普通用户登录 | 公开、同源校验、严格限流 |
+| `GET /api/v1/users/me` | 获取当前普通用户 | 登录用户 |
+| `DELETE /api/v1/user-sessions/current` | 普通用户退出 | 登录用户、同源校验 |
+| `GET /api/v1/configuration-engagement` | 批量获取方案互动指标与当前用户投票 | 公开 |
+| `POST /api/v1/configuration-impressions` | 批量记录列表展示 | 公开、同源校验、限流 |
+| `POST /api/v1/configurations/:key/click` | 记录详情点击 | 公开、同源校验、限流 |
+| `POST /api/v1/configurations/:key/vote` | 推荐、不推荐或取消 | 登录用户、同源校验、限流 |
+| `GET /api/v1/configurations/:key/comments` | 获取方案评论 | 公开 |
+| `POST /api/v1/configurations/:key/comments` | 发表评论 | 登录用户、同源校验、限流 |
 | `POST /api/v1/admin/sessions` | 管理员登录 | 公开、严格限流 |
 | `DELETE /api/v1/admin/sessions/current` | 管理员退出 | 管理员 |
 | `POST /api/v1/admin/parts` | 新增配件 | 管理员 |
@@ -178,7 +191,12 @@ API 使用 JSON，统一返回 `requestId`。业务错误返回稳定错误码�
 | `builds` | `id`, `share_code_hash`, `name`, `budget_fen`, `usage`, `rule_version`, `created_at` | 已保存配置 |
 | `build_items` | `build_id`, `category_id`, `part_id`, `price_snapshot_fen`, `part_snapshot` | 配置项和历史快照 |
 | `build_check_results` | `build_id`, `rule_id`, `level`, `message`, `details` | 保存时的兼容结果 |
-| `published_configurations` | `anonymous_id`, `author_name`, `name`, `configuration_class`, `selected_part_ids`, `parts_snapshot`, `checks_snapshot`, `summary_snapshot` | 通过复核的用户公开投稿 |
+| `published_configurations` | `owner_user_id`, `author_name`, `name`, `configuration_class`, `selected_part_ids`, `parts_snapshot`, `checks_snapshot`, `summary_snapshot` | 通过复核的用户公开投稿 |
+| `user_accounts` | `id`, `username`, `display_name`, `password_hash`, `status` | 普通用户账号 |
+| `user_sessions` | `id_hash`, `user_id`, `expires_at` | 普通用户可撤销会话 |
+| `configuration_engagement` | `configuration_key`, `impression_count`, `click_count` | 官方与用户方案的展示、点击汇总 |
+| `configuration_votes` | `configuration_key`, `user_id`, `value` | 单用户唯一推荐/不推荐选择 |
+| `configuration_comments` | `id`, `configuration_key`, `user_id`, `content`, `created_at` | 方案评论 |
 | `admin_users` | `id`, `username`, `password_hash`, `status` | 管理员 |
 | `admin_sessions` | `id_hash`, `admin_user_id`, `expires_at`, `last_seen_at` | 可撤销后台会话 |
 | `audit_logs` | `actor_id`, `action`, `target_type`, `target_id`, `changes`, `created_at` | 后台变更追踪 |
@@ -194,7 +212,9 @@ API 使用 JSON，统一返回 `requestId`。业务错误返回稳定错误码�
 - 配置单保存名称、价格和关键规格快照，确保配件改价或下架后历史分享仍可解释。
 - `shareCode` 使用密码学安全随机值，数据库只保存其哈希；禁止使用递增 ID 作为公开分享地址。
 - 所有公开查询必须过滤未上架配件，但历史分享允许读取自身快照。
-- 投稿中的 `anonymous_id` 仅用于匿名产品标识，不随公开配置响应返回；公开昵称由用户主动填写。
+- 账号用户名规范化为小写，密码只保存 Argon2id 摘要；公开响应仅包含显示名称。
+- `configuration_votes` 使用 `(configuration_key, user_id)` 复合主键，数据库层保证单用户单票。
+- 投票写入使用 UPSERT，互动外键和按方案倒序评论查询均建立索引。
 
 ## 8. 兼容性引擎
 
@@ -261,11 +281,13 @@ interface CompatibilityResult {
 5. API 返回只显示一次的随机分享码和完整分享地址。
 6. 分享页根据分享码读取快照，不依赖浏览器本地状态。
 
-首期分享链接为“获得链接即可查看”，不提供搜索、列表或公开索引入口。后续增加账号体系时，可以为配置单补充所有权，而不改变公开分享模型。
+首期分享链接为“获得链接即可查看”，不提供搜索、列表或公开索引入口；它与公开投稿的账号所有权相互独立。
 
 ### 9.1 用户配置投稿
 
-用户点击“上传我的配置”后，前端只提交当前草稿中的八类配件 ID、公开称呼、方案名称、分类和可选推荐理由。API 再次读取当前在售配件，拒绝缺项、分类错位、下架或明确不兼容的组合，并把通过检查的配件、规则结果和汇总快照写入 `published_configurations`。列表最多返回最近 200 条投稿，普通用户无需账号；第一版不提供评论、点赞、编辑或删除等社区功能。
+用户登录后点击“上传我的配置”，前端只提交当前草稿中的八类配件 ID、方案名称、分类和可选推荐理由，公开作者由服务端根据会话确定。API 再次读取当前在售配件，拒绝缺项、分类错位、下架或明确不兼容的组合，并把通过检查的配件、规则结果和汇总快照写入 `published_configurations`。官方与用户方案使用稳定的 `configuration_key` 接收评论、投票与互动计数。
+
+默认混合分由服务端计算：平滑推荐率占基础权重，推荐数与评论数按对数增益，点击率封顶计入，并对不推荐数施加惩罚。该公式避免少量点击将新方案无限抬高，也避免纯流量盖过明确反对；前端只能选择排序方式，不能提交评分。
 
 ## 10. 管理后台与安全
 
@@ -278,6 +300,8 @@ interface CompatibilityResult {
 - 登录接口按 IP 和用户名组合限流，并记录失败审计事件。
 - 管理写操作校验 Origin/CSRF，并要求同域 HTTPS。
 - 管理员修改配件、价格、规格和状态均写入 `audit_logs`。
+
+普通用户使用独立的 `user_accounts`、`user_sessions` 和 Cookie 名称。普通用户会话不能访问管理 API，管理员会话也不能代替普通用户投票或评论。
 
 ### 10.2 通用安全
 
@@ -449,7 +473,7 @@ MVP 以 50～100 个配件、单实例 API 和单主库为基线。扩容必须�
 | 是否自建 PostgreSQL | 否 | MVP 使用托管数据库降低备份、高可用和升级负担 |
 | 是否使用微服务 | 否 | 当前业务和团队规模不需要额外分布式复杂度 |
 | 兼容规则存储位置 | TypeScript 领域包 | 可测试、可版本化，并可在浏览器和服务端复用 |
-| 普通用户是否必须登录 | 否 | 降低首次装机阻力，分享时保存匿名配置 |
+| 普通用户是否必须登录 | 浏览不需要；投稿、评论和投票需要 | 保持低门槛浏览，同时建立内容归属并限制重复投票 |
 | 管理后台认证方式 | 服务端会话 | 会话可撤销，适合少量管理员和同域部署 |
 | 产品分析方案 | 第一方事件表 | 满足 MVP 指标，同时减少境外依赖和非必要数据采集 |
 | AI 推荐首版方式 | 确定性约束搜索，预留模型解析接口 | 保证兼容、预算和功耗结论可测试，且不依赖外部模型可用性 |
