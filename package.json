@@ -13,9 +13,10 @@
     "lint": "node node_modules/eslint/bin/eslint.js . --max-warnings=0",
     "test": "node node_modules/vitest/vitest.mjs run --config packages/domain/vitest.config.ts --configLoader runner && node node_modules/vitest/vitest.mjs run --config packages/contracts/vitest.config.ts --configLoader runner && node node_modules/vitest/vitest.mjs run --config packages/database/vitest.config.ts --configLoader runner && node node_modules/vitest/vitest.mjs run --config apps/api/vitest.config.ts --configLoader runner && node node_modules/vitest/vitest.mjs run --config apps/web/vitest.config.ts --configLoader runner",
     "test:watch": "node node_modules/vitest/vitest.mjs --config apps/web/vitest.config.ts --configLoader runner",
-    "test:docs": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/Validate-ProductDesign.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File tests/Validate-TechnicalSolution.ps1",
+    "test:docs": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/Validate-ProductDesign.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File tests/Validate-TechnicalSolution.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File tests/Validate-ReleaseChecklist.ps1",
+    "test:config": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/Validate-DeploymentConfig.ps1",
     "test:e2e": "node node_modules/@playwright/test/cli.js test",
-    "validate": "npm run typecheck && npm run lint && npm test && npm run test:docs && npm run build"
+    "validate": "npm run typecheck && npm run lint && npm test && npm run test:docs && npm run test:config && npm run build"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",

@@ -2,12 +2,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { categories, getPartsByIds } from "@pc-assembly/domain";
-import type { AnalyticsEventInput } from "@pc-assembly/contracts";
-import type { BuildDraft, CategoryCode, Part } from "@pc-assembly/domain";
+import type { AnalyticsEventInput, RecommendationInput } from "@pc-assembly/contracts";
+import type { BuildDraft, CategoryCode, Part, RecommendedBuild } from "@pc-assembly/domain";
 import AdminLoginScreen from "./components/AdminLoginScreen";
 import AdminPartsScreen from "./components/AdminPartsScreen";
 import AppHeader from "./components/AppHeader";
 import BuilderScreen from "./components/BuilderScreen";
+import RecommendationScreen from "./components/RecommendationScreen";
 import SavedScreen from "./components/SavedScreen";
 import SetupScreen from "./components/SetupScreen";
 import SharedBuildScreen from "./components/SharedBuildScreen";
@@ -68,11 +69,26 @@ export default function App() {
     return url;
   };
   const saveCurrent = () => { persist(draft, "配置已保存到当前浏览器"); track({ eventName: "build_saved_local", properties: { progress: Object.keys(draft.selectedPartIds).length } }); };
+  const applyRecommendation = (recommendation: RecommendedBuild, input: RecommendationInput) => {
+    const next: BuildDraft = {
+      ...createDraft(),
+      name: `${recommendation.label} · ${input.usage}主机`,
+      budgetFen: input.budgetFen,
+      usage: input.usage,
+      selectedPartIds: { ...recommendation.selectedPartIds },
+      updatedAt: new Date().toISOString()
+    };
+    persist(next, "推荐配置已导入，可继续调整配件");
+    track({ eventName: "recommendation_applied", properties: { strategy: recommendation.strategy, totalRange: budgetRange(recommendation.summary.totalFen) } });
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    navigate("/builder");
+  };
 
   return <div className="app-shell"><AppHeader onSave={saveCurrent} />
     <Routes>
       <Route path="/" element={<SetupScreen draft={draft} hasSavedDraft={Boolean(savedDraft)} onStart={start} onContinue={() => { if (savedDraft) setDraft(savedDraft); navigate("/builder"); }} />} />
       <Route path="/builder" element={<BuilderScreen draft={draft} parts={parts} loading={partsQuery.isLoading} error={partsQuery.error ? errorMessage(partsQuery.error) : ""} onChoose={choose} onEditSetup={() => navigate("/")} onCopy={copyBuild} onShare={shareBuild} />} />
+      <Route path="/recommend" element={<RecommendationScreen onGenerated={(input, resultCount) => track({ eventName: "recommendation_generated", properties: { usage: input.usage, budgetRange: budgetRange(input.budgetFen), resultCount } })} onApply={applyRecommendation} />} />
       <Route path="/saved" element={<SavedScreen savedDraft={savedDraft} parts={parts} onOpen={() => { if (savedDraft) setDraft(savedDraft); navigate("/builder"); }} onStart={() => navigate("/")} />} />
       <Route path="/builds/:shareCode" element={<SharedRoute />} />
       <Route path="/admin/login" element={<AdminLoginScreen onLogin={async (username, password) => { await loginAdmin(username, password); navigate("/admin/parts"); }} />} />

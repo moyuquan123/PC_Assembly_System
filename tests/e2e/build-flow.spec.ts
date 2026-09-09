@@ -37,3 +37,28 @@ test("creates a compatible build and opens its server-backed share page", async 
   await expect(page.getByText("服务端兼容校验通过")).toBeVisible();
   expect(pageErrors).toEqual([]);
 });
+
+test("generates a smart recommendation and imports it into the builder", async ({ page }) => {
+  await page.goto("/recommend");
+  await expect(page.getByRole("heading", { name: "告诉我们目标，获得三套可靠配置" })).toBeVisible();
+
+  await page.getByLabel("整机预算").fill("9000");
+  await page.getByRole("button", { name: "内容创作" }).click();
+  await page.getByRole("button", { name: "生成三套推荐" }).click();
+
+  await expect(page.getByRole("heading", { name: "均衡方案" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "性能优先" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "性价比优先" })).toBeVisible();
+  await page.getByRole("button", { name: "采用并继续调整" }).first().click();
+
+  await expect(page.getByRole("heading", { name: "选择CPU" })).toBeVisible();
+  await expect(page.getByText("推荐配置已导入，可继续调整配件")).toBeVisible();
+  const importedMobileSummary = page.locator(".mobile-summary-button");
+  if (await importedMobileSummary.isVisible()) {
+    await importedMobileSummary.click();
+    await expect(page.getByRole("dialog", { name: "均衡方案 · 内容创作主机" })).toBeVisible();
+    await expect(page.locator(".modal-build-row:not(.missing)")).toHaveCount(8);
+  } else {
+    await expect(page.getByText("8 / 8").first()).toBeVisible();
+  }
+});

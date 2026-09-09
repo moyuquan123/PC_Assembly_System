@@ -17,3 +17,8 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: () => false,
   }) as MediaQueryList,
 });
+
+Object.defineProperty(window, "scrollTo", {
+  writable: true,
+  value: () => {}
+});

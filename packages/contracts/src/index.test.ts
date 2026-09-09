@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminLoginSchema, buildInputSchema, partSchema } from "./index.js";
+import { adminLoginSchema, buildInputSchema, partSchema, recommendationInputSchema } from "./index.js";
 
 describe("API contracts", () => {
   it("rejects floating-point budgets and incomplete credentials", () => {
@@ -14,5 +14,15 @@ describe("API contracts", () => {
       displaySpecs: [], specs: { kind: "gpu", lengthMm: 200, powerW: 100 }
     });
     expect(parsed.success).toBe(false);
+  });
+
+  it("validates bounded smart recommendation inputs", () => {
+    expect(recommendationInputSchema.safeParse({
+      budgetFen: 900_000,
+      usage: "内容创作",
+      preferences: { quiet: true, upgradeFriendly: true }
+    }).success).toBe(true);
+    expect(recommendationInputSchema.safeParse({ budgetFen: 100_000, usage: "游戏" }).success).toBe(false);
+    expect(recommendationInputSchema.safeParse({ budgetFen: 900_000, usage: "未知" }).success).toBe(false);
   });
 });

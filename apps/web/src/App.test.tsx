@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { categories, checkCompatibility, getPartsByIds, seedParts, summarizeBuild } from "@pc-assembly/domain";
+import { categories, checkCompatibility, getPartsByIds, recommendBuilds, seedParts, summarizeBuild } from "@pc-assembly/domain";
 import App from "./App";
 
 function apiResponse(data: unknown, status = 200) {
@@ -16,6 +16,10 @@ function installApiMock() {
     if (url === "/api/v1/categories") return apiResponse(categories);
     if (url === "/api/v1/parts") return apiResponse(seedParts);
     if (url === "/api/v1/events") return apiResponse({ accepted: true }, 201);
+    if (url === "/api/v1/recommendations" && init?.method === "POST") {
+      const payload = JSON.parse(String(init.body));
+      return apiResponse({ recommendationVersion: "test", ruleVersion: "test", recommendations: recommendBuilds(seedParts, payload) });
+    }
     if (url === "/api/v1/builds" && init?.method === "POST") {
       const payload = JSON.parse(String(init.body));
       const parts = getPartsByIds(payload.selectedPartIds, seedParts);
@@ -75,5 +79,20 @@ describe("PC assembly product flow", () => {
     await user.click(screen.getAllByRole("button", { name: /查看完整配置/ })[0]!);
     await user.click(screen.getByRole("button", { name: /生成分享链接/ }));
     await waitFor(() => expect((screen.getByLabelText("分享链接已生成") as HTMLInputElement).value).toContain("/builds/abcdefghijklmnop"));
+  });
+
+  it("generates three smart recommendations and imports one into the builder", async () => {
+    const user = userEvent.setup();
+    renderApp("/recommend");
+
+    await user.click(screen.getByRole("button", { name: /生成三套推荐/ }));
+    expect(await screen.findByRole("heading", { name: "均衡方案" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "性能优先" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "性价比优先" })).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: /采用并继续调整/ })[0]!);
+
+    expect(await screen.findByRole("heading", { name: "选择CPU" })).toBeInTheDocument();
+    expect(screen.getAllByText("8 / 8").length).toBeGreaterThan(0);
+    expect(screen.getByRole("status")).toHaveTextContent("推荐配置已导入");
   });
 });

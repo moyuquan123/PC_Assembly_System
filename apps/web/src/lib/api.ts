@@ -1,5 +1,5 @@
-import type { AnalyticsEventInput, BuildInput, PartsQuery } from "@pc-assembly/contracts";
-import type { BuildSummary, Category, CompatibilityResult, Part } from "@pc-assembly/domain";
+import type { AnalyticsEventInput, BuildInput, PartsQuery, RecommendationInput } from "@pc-assembly/contracts";
+import type { BuildSummary, Category, CompatibilityResult, Part, RecommendedBuild } from "@pc-assembly/domain";
 
 interface ApiEnvelope<T> { requestId: string; data: T; }
 interface ApiErrorEnvelope { requestId: string; error: { code: string; message: string; details?: unknown } }
@@ -53,6 +53,16 @@ export function createSharedBuild(input: BuildInput): Promise<SavedBuildResponse
 
 export function getSharedBuild(shareCode: string): Promise<SavedBuildResponse> {
   return apiRequest(`/api/v1/builds/${encodeURIComponent(shareCode)}`);
+}
+
+export interface RecommendationsResponse {
+  recommendationVersion: string;
+  ruleVersion: string;
+  recommendations: RecommendedBuild[];
+}
+
+export function getRecommendations(input: RecommendationInput): Promise<RecommendationsResponse> {
+  return apiRequest("/api/v1/recommendations", { method: "POST", body: JSON.stringify(input) });
 }
 
 export function loginAdmin(username: string, password: string): Promise<{ username: string }> {

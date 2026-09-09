@@ -10,13 +10,23 @@ import {
   compatibilityCheckSchema,
   imageUploadRequestSchema,
   partIdParamsSchema,
+  partSchema,
   partsQuerySchema,
+  recommendationInputSchema,
   shareCodeParamsSchema
 } from "@pc-assembly/contracts";
 import type { AnalyticsEventInput } from "@pc-assembly/contracts";
-import { categories, categoryCodes, checkCompatibility, RULE_VERSION, summarizeBuild } from "@pc-assembly/domain";
+import {
+  categories,
+  categoryCodes,
+  checkCompatibility,
+  recommendBuilds,
+  RECOMMENDATION_VERSION,
+  RULE_VERSION,
+  summarizeBuild
+} from "@pc-assembly/domain";
 import type { CategoryCode, Part } from "@pc-assembly/domain";
-import Fastify from "fastify";
+import Fastify, { LogController } from "fastify";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ZodType } from "zod";
 import { ApiError } from "./errors.js";
@@ -93,20 +103,41 @@ const eventProperties: Record<AnalyticsEventInput["eventName"], Set<string>> = {
   part_changed_after_warning: new Set(["ruleId", "category"]),
   build_completed: new Set(["durationSeconds", "budgetRange", "totalRange"]),
   build_saved_local: new Set(["progress"]),
-  build_shared: new Set(["progress", "hasWarning"])
+  build_shared: new Set(["progress", "hasWarning"]),
+  recommendation_generated: new Set(["usage", "budgetRange", "resultCount"]),
+  recommendation_applied: new Set(["strategy", "totalRange"])
 };
 
 export async function createApp(options: AppOptions = {}): Promise<FastifyInstance> {
   const store = options.store ?? new MemoryStore();
-  const app = Fastify({ logger: options.logger ?? false, bodyLimit: 256 * 1024, requestIdHeader: "x-request-id" });
+  const app = Fastify({
+    logger: options.logger ?? false,
+    logController: new LogController({ disableRequestLogging: true }),
+    bodyLimit: 256 * 1024,
+    requestIdHeader: "x-request-id"
+  });
   const allowedOrigins = new Set(options.allowedOrigins ?? ["http://127.0.0.1:4173", "http://localhost:4173"]);
 
   await app.register(cookie);
   await app.register(rateLimit, { global: false, max: 120, timeWindow: "1 minute" });
 
+  if (options.logger) {
+    app.addHook("onResponse", async (request, reply) => {
+      request.log.info({
+        method: request.method,
+        route: request.routeOptions.url,
+        statusCode: reply.statusCode,
+        responseTimeMs: Math.round(reply.elapsedTime)
+      }, "request completed");
+    });
+  }
+
   if (options.bootstrapAdmin) {
-    const passwordHash = await hash(options.bootstrapAdmin.password, { memoryCost: 19_456, timeCost: 2, parallelism: 1 });
-    await store.upsertAdmin(options.bootstrapAdmin.username, passwordHash);
+    const existingAdmin = await store.getAdminByUsername(options.bootstrapAdmin.username);
+    if (!existingAdmin) {
+      const passwordHash = await hash(options.bootstrapAdmin.password, { memoryCost: 19_456, timeCost: 2, parallelism: 1 });
+      await store.upsertAdmin(options.bootstrapAdmin.username, passwordHash);
+    }
   }
 
   app.decorate("store", store);
@@ -163,6 +194,15 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     const snapshot = { name: "兼容性检查", budgetFen: 200_000, usage: "游戏" as const, parts };
     return data(request, { ruleVersion: RULE_VERSION, results: checkCompatibility(snapshot), summary: summarizeBuild(snapshot) });
   });
+  app.post("/api/v1/recommendations", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } }, schema: { response: responseSchema } }, async (request) => {
+    const input = parse(recommendationInputSchema, request.body);
+    const parts = await store.listParts({});
+    const recommendations = recommendBuilds(parts, input);
+    if (recommendations.length === 0) {
+      throw new ApiError(422, "RECOMMENDATION_UNAVAILABLE", "当前配件库存无法生成完整且兼容的推荐方案。");
+    }
+    return data(request, { recommendationVersion: RECOMMENDATION_VERSION, ruleVersion: RULE_VERSION, recommendations });
+  });
   app.post("/api/v1/builds", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } }, schema: { response: responseSchema } }, async (request, reply) => {
     const input = parse(buildInputSchema, request.body);
     const missing = categoryCodes.filter((category) => !input.selectedPartIds[category]);
@@ -214,6 +254,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     const patch = parse(adminPartPatchSchema, request.body);
     const before = await store.getPart(id, true);
     if (!before) throw new ApiError(404, "PART_NOT_FOUND", "没有找到该配件。");
+    parse(partSchema, { ...before, ...patch, id, updatedAt: before.updatedAt });
     const part = await store.updatePart(id, patch);
     await store.addAudit(request.admin!.id, "part.updated", id, { before, after: part });
     return data(request, part);

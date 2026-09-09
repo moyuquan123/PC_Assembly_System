@@ -21,6 +21,8 @@ $requiredPatterns = @(
     "React 19.*Vite.*TypeScript",
     "Node.js 24 LTS.*Fastify 5",
     "PostgreSQL 17",
+    "POST /api/v1/recommendations",
+    "recommendationVersion",
     "cloud.tencent.com",
     "help.aliyun.com"
 )

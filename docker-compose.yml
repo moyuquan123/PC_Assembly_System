@@ -12,6 +12,28 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["node", "packages/database/dist/migrate.js"]
+    environment:
+      DATABASE_URL: postgres://pc_assembly:change-me@postgres:5432/pc_assembly
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["node", "packages/database/dist/seed.js"]
+    environment:
+      DATABASE_URL: postgres://pc_assembly:change-me@postgres:5432/pc_assembly
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
   api:
     build:
       context: .
@@ -25,8 +47,8 @@ services:
       ADMIN_BOOTSTRAP_USERNAME: admin
       ADMIN_BOOTSTRAP_PASSWORD: replace-before-use
     depends_on:
-      postgres:
-        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
     read_only: true
     tmpfs: [/tmp]
   web:

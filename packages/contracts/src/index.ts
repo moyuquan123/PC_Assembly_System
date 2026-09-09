@@ -78,6 +78,15 @@ export const buildInputSchema = z.object({
 });
 
 export const compatibilityCheckSchema = z.object({ selectedPartIds: selectedPartIdsSchema });
+export const recommendationInputSchema = z.object({
+  budgetFen: z.number().int().min(200_000).max(10_000_000),
+  usage: usageSchema,
+  preferences: z.object({
+    compact: z.boolean().optional(),
+    quiet: z.boolean().optional(),
+    upgradeFriendly: z.boolean().optional()
+  }).default({})
+});
 export const shareCodeParamsSchema = z.object({ shareCode: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/) });
 export const partIdParamsSchema = z.object({ id: z.string().min(3).max(100) });
 
@@ -95,7 +104,7 @@ export const imageUploadRequestSchema = z.object({
 });
 
 export const analyticsEventSchema = z.object({
-  eventName: z.enum(["build_started", "part_selected", "compatibility_triggered", "part_changed_after_warning", "build_completed", "build_saved_local", "build_shared"]),
+  eventName: z.enum(["build_started", "part_selected", "compatibility_triggered", "part_changed_after_warning", "build_completed", "build_saved_local", "build_shared", "recommendation_generated", "recommendation_applied"]),
   anonymousId: z.string().uuid(),
   buildId: z.string().uuid().optional(),
   properties: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({})
@@ -103,6 +112,7 @@ export const analyticsEventSchema = z.object({
 
 export type PartsQuery = z.infer<typeof partsQuerySchema>;
 export type BuildInput = z.infer<typeof buildInputSchema>;
+export type RecommendationInput = z.infer<typeof recommendationInputSchema>;
 export type AdminLogin = z.infer<typeof adminLoginSchema>;
 export type AdminPartCreate = z.infer<typeof adminPartCreateSchema>;
 export type AdminPartPatch = z.infer<typeof adminPartPatchSchema>;

@@ -71,6 +71,21 @@ describe("public API", () => {
     expect(shared.json().data.parts).toHaveLength(8);
     expect(JSON.stringify(shared.json())).not.toContain(shareCode);
   });
+
+  it("returns three server-validated smart recommendations", async () => {
+    const { app } = await testApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/recommendations",
+      payload: { budgetFen: 900_000, usage: "游戏", preferences: { upgradeFriendly: true } }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.recommendationVersion).toBeTruthy();
+    expect(response.json().data.recommendations).toHaveLength(3);
+    expect(response.json().data.recommendations.every((item: any) => item.parts.length === 8)).toBe(true);
+    expect(response.json().data.recommendations.flatMap((item: any) => item.checks).some((check: any) => check.level === "incompatible")).toBe(false);
+  });
 });
 
 describe("admin API", () => {
@@ -101,6 +116,44 @@ describe("admin API", () => {
     expect(updated.statusCode).toBe(200);
     expect(updated.json().data.priceFen).toBe(150_000);
     expect(store.audits).toHaveLength(1);
+  });
+
+  it("does not reset an existing bootstrap administrator password", async () => {
+    const store = new MemoryStore();
+    const first = await createApp({ store, bootstrapAdmin: { username: "admin", password: "FirstPassword123!" } });
+    apps.push(first);
+    const second = await createApp({ store, bootstrapAdmin: { username: "admin", password: "SecondPassword123!" } });
+    apps.push(second);
+
+    const originalPassword = await second.inject({
+      method: "POST",
+      url: "/api/v1/admin/sessions",
+      payload: { username: "admin", password: "FirstPassword123!" }
+    });
+    const replacementPassword = await second.inject({
+      method: "POST",
+      url: "/api/v1/admin/sessions",
+      payload: { username: "admin", password: "SecondPassword123!" }
+    });
+
+    expect(originalPassword.statusCode).toBe(200);
+    expect(replacementPassword.statusCode).toBe(401);
+  });
+
+  it("rejects a patch that makes the part category disagree with its specs", async () => {
+    const { app } = await testApp();
+    const login = await app.inject({ method: "POST", url: "/api/v1/admin/sessions", payload: { username: "admin", password: "Admin123!" } });
+    const setCookie = login.headers["set-cookie"];
+    const sessionCookie = (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(";")[0];
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/admin/parts/cpu-7600x",
+      headers: { cookie: sessionCookie!, origin: "http://127.0.0.1:4173" },
+      payload: { category: "gpu" }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe("VALIDATION_FAILED");
   });
 
   it("rejects event properties outside the first-party allowlist", async () => {
