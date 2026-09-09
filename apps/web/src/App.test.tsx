@@ -61,6 +61,20 @@ describe("PC assembly product flow", () => {
     expect(screen.getByRole("heading", { name: "选择显卡" })).toBeInTheDocument();
   });
 
+  it("shows a live configuration overview and uses it to switch categories", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("pc-assembly-build-draft", JSON.stringify({ schemaVersion: 1, name: "总览测试", budgetFen: 800000, usage: "游戏", selectedPartIds: { cpu: "cpu-7600x" }, updatedAt: new Date().toISOString() }));
+    renderApp("/builder");
+
+    expect(await screen.findByRole("heading", { name: "配置总览" })).toBeInTheDocument();
+    expect(screen.getByText("总览测试 · 已完成 1 / 8")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看CPU：AMD 锐龙 5 7600X" })).toBeInTheDocument();
+    expect(screen.getAllByText("待选择")).toHaveLength(7);
+
+    await user.click(screen.getByRole("button", { name: "选择显卡配件" }));
+    expect(screen.getByRole("heading", { name: "选择显卡" })).toBeInTheDocument();
+  });
+
   it("saves a versioned local draft and shows it under My Builds", async () => {
     const user = userEvent.setup(); renderApp();
     await user.click(screen.getByRole("button", { name: /开始选择配件/ }));

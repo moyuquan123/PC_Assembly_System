@@ -12,6 +12,8 @@ test("creates a compatible build and opens its server-backed share page", async 
   await page.getByRole("button", { name: "开始选择配件" }).click();
 
   await expect(page.getByRole("heading", { name: "选择CPU" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "配置总览" })).toBeVisible();
+  await expect(page.getByText("自动化验收主机 · 已完成 0 / 8")).toBeVisible();
   await page.getByRole("button", { name: "选择", exact: true }).nth(1).click();
   await expect(page.getByRole("button", { name: "不兼容" }).first()).toBeDisabled();
 
@@ -53,6 +55,8 @@ test("generates a smart recommendation and imports it into the builder", async (
 
   await expect(page.getByRole("heading", { name: "选择CPU" })).toBeVisible();
   await expect(page.getByText("推荐配置已导入，可继续调整配件")).toBeVisible();
+  await expect(page.getByText("均衡方案 · 内容创作主机 · 已完成 8 / 8")).toBeVisible();
+  await expect(page.getByRole("button", { name: /查看CPU：/ })).toBeVisible();
   const importedMobileSummary = page.locator(".mobile-summary-button");
   if (await importedMobileSummary.isVisible()) {
     await importedMobileSummary.click();

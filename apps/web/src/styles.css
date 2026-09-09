@@ -544,6 +544,189 @@ input:focus-visible {
   transition: width 240ms ease;
 }
 
+.configuration-overview {
+  padding: 22px clamp(20px, 3vw, 44px) 24px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(135deg, #f8faff 0%, #ffffff 62%);
+}
+
+.configuration-overview-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.configuration-overview-heading > div > span {
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.configuration-overview-heading h2 {
+  margin: 4px 0 0;
+  font-size: 22px;
+  letter-spacing: -.035em;
+}
+
+.configuration-overview-heading p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.overview-detail-button {
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.configuration-overview-body {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(290px, 340px);
+  gap: 20px;
+}
+
+.overview-part-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.overview-part {
+  min-width: 0;
+  min-height: 58px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #ffffff;
+  display: grid;
+  grid-template-columns: 23px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.overview-part:hover,
+.overview-part.active {
+  border-color: #8ab0ff;
+  background: var(--blue-soft);
+}
+
+.overview-part.active {
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+.overview-part > span {
+  width: 23px;
+  height: 23px;
+  border-radius: 50%;
+  background: var(--surface-soft);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.overview-part.selected > span {
+  background: var(--blue);
+  color: #ffffff;
+}
+
+.overview-part > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.overview-part small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.overview-part strong {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.overview-part.selected strong {
+  color: var(--ink);
+}
+
+.overview-part > svg {
+  color: var(--success);
+}
+
+.overview-metrics {
+  margin: 0;
+  padding: 0 0 0 20px;
+  border-left: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-content: center;
+}
+
+.overview-metrics > div {
+  min-width: 0;
+  padding: 7px 12px;
+}
+
+.overview-metrics > div:nth-child(even) {
+  border-left: 1px solid var(--line);
+}
+
+.overview-metrics > div:nth-child(n + 3) {
+  border-top: 1px solid var(--line);
+}
+
+.overview-metrics dt {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.overview-metrics dd {
+  margin: 4px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 780;
+}
+
+.overview-metrics > div:first-child dd {
+  color: var(--blue);
+  font-size: 18px;
+}
+
+.overview-status dt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.overview-status.success dd,
+.overview-status.success dt svg { color: var(--success); }
+.overview-status.warning dd,
+.overview-status.warning dt svg { color: var(--warning); }
+.overview-status.error dd,
+.overview-status.error dt svg { color: var(--error); }
+
 .builder-layout {
   min-height: calc(100vh - 150px);
   display: grid;
@@ -1579,6 +1762,41 @@ input:focus-visible {
 
   .setup-strip > :nth-child(2) {
     border-right: 0;
+  }
+
+  .configuration-overview {
+    padding: 18px 16px 20px;
+  }
+
+  .configuration-overview-heading {
+    align-items: center;
+  }
+
+  .configuration-overview-body {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .overview-part-grid {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+
+  .overview-part-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .overview-part {
+    flex: 0 0 184px;
+  }
+
+  .overview-metrics {
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: #ffffff;
   }
 
   .builder-layout {
