@@ -12,6 +12,7 @@ import {
   partIdParamsSchema,
   partSchema,
   partsQuerySchema,
+  publishedConfigurationInputSchema,
   recommendationInputSchema,
   shareCodeParamsSchema
 } from "@pc-assembly/contracts";
@@ -105,7 +106,8 @@ const eventProperties: Record<AnalyticsEventInput["eventName"], Set<string>> = {
   build_saved_local: new Set(["progress"]),
   build_shared: new Set(["progress", "hasWarning"]),
   recommendation_generated: new Set(["usage", "budgetRange", "resultCount"]),
-  recommendation_applied: new Set(["strategy", "totalRange"])
+  recommendation_applied: new Set(["strategy", "totalRange"]),
+  configuration_published: new Set(["configurationClass", "totalRange"])
 };
 
 export async function createApp(options: AppOptions = {}): Promise<FastifyInstance> {
@@ -223,6 +225,29 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     const stored = await store.getBuildByShareHash(hashToken(shareCode));
     if (!stored) throw new ApiError(404, "BUILD_NOT_FOUND", "该分享配置不存在或已失效。");
     return data(request, { ...stored, summary: summarizeBuild({ name: stored.name, budgetFen: stored.budgetFen, usage: stored.usage, parts: stored.parts }) });
+  });
+
+  app.get("/api/v1/configurations", { schema: { response: responseSchema } }, async (request) => {
+    return data(request, await store.listPublishedConfigurations());
+  });
+  app.post("/api/v1/configurations", {
+    preHandler: requireSameOrigin,
+    config: { rateLimit: { max: 8, timeWindow: "10 minutes" } },
+    schema: { response: responseSchema }
+  }, async (request, reply) => {
+    const input = parse(publishedConfigurationInputSchema, request.body);
+    const missing = categoryCodes.filter((category) => !input.selectedPartIds[category]);
+    if (missing.length > 0) throw new ApiError(400, "CONFIGURATION_INCOMPLETE", "请选择完整的八类配件后再上传配置。", { missing });
+    const parts = await resolveParts(input.selectedPartIds, store);
+    const usage = input.configurationClass === "办公入门" ? "办公" : input.configurationClass === "内容创作" ? "内容创作" : "游戏";
+    const snapshot = { name: input.name, budgetFen: Number.MAX_SAFE_INTEGER, usage: usage as "办公" | "内容创作" | "游戏", parts };
+    const checks = checkCompatibility(snapshot);
+    if (checks.some((check) => check.level === "incompatible")) {
+      throw new ApiError(409, "CONFIGURATION_INCOMPATIBLE", "当前配置存在明确冲突，无法上传。", { checks });
+    }
+    const stored = await store.savePublishedConfiguration(input, parts, checks, summarizeBuild(snapshot));
+    reply.status(201);
+    return data(request, stored);
   });
 
   app.post("/api/v1/admin/sessions", { config: { rateLimit: { max: 8, timeWindow: "5 minutes" } }, schema: { response: responseSchema } }, async (request, reply) => {

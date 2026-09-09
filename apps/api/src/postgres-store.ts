@@ -1,8 +1,8 @@
-import type { AnalyticsEventInput, BuildInput, PartsQuery, AdminPartCreate, AdminPartPatch } from "@pc-assembly/contracts";
-import type { CompatibilityResult, Part, PartSpecs } from "@pc-assembly/domain";
+import type { AnalyticsEventInput, BuildInput, PartsQuery, AdminPartCreate, AdminPartPatch, PublishedConfigurationInput } from "@pc-assembly/contracts";
+import type { BuildSummary, CompatibilityResult, Part, PartSpecs } from "@pc-assembly/domain";
 import postgres from "postgres";
 import type { Sql } from "postgres";
-import type { AdminSession, AdminUser, Store, StoredBuild } from "./store.js";
+import type { AdminSession, AdminUser, PublishedConfiguration, Store, StoredBuild } from "./store.js";
 
 interface BasePartRow {
   id: string; category: Part["category"]; brand: string; model: string; name: string;
@@ -111,6 +111,37 @@ export class PostgresStore implements Store {
     const items = await this.sql<{ partSnapshot: Part }[]>`SELECT part_snapshot AS "partSnapshot" FROM build_items WHERE build_id=${build.id} ORDER BY category_code`;
     const checks = await this.sql<any[]>`SELECT rule_id AS "ruleId", level, message, details FROM build_check_results WHERE build_id=${build.id} ORDER BY CASE level WHEN 'incompatible' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, rule_id`;
     return { ...build, createdAt: new Date(build.createdAt).toISOString(), parts: items.map((item) => item.partSnapshot), checks } as StoredBuild;
+  }
+
+  async listPublishedConfigurations(): Promise<PublishedConfiguration[]> {
+    const rows = await this.sql<any[]>`
+      SELECT id, author_name AS "authorName", name,
+             configuration_class AS "configurationClass", description,
+             selected_part_ids AS "selectedPartIds", parts_snapshot AS parts,
+             checks_snapshot AS checks, summary_snapshot AS summary,
+             created_at AS "createdAt"
+      FROM published_configurations
+      ORDER BY created_at DESC
+      LIMIT 200
+    `;
+    return rows.map((row) => ({ ...row, createdAt: new Date(row.createdAt).toISOString() })) as PublishedConfiguration[];
+  }
+
+  async savePublishedConfiguration(input: PublishedConfigurationInput, parts: Part[], checks: CompatibilityResult[], summary: BuildSummary): Promise<PublishedConfiguration> {
+    const [row] = await this.sql<any[]>`
+      INSERT INTO published_configurations
+        (anonymous_id, author_name, name, configuration_class, description, selected_part_ids, parts_snapshot, checks_snapshot, summary_snapshot)
+      VALUES
+        (${input.anonymousId}, ${input.authorName}, ${input.name}, ${input.configurationClass}, ${input.description},
+         ${this.sql.json(input.selectedPartIds)}, ${this.sql.json(parts as any)}, ${this.sql.json(checks as any)}, ${this.sql.json(summary as any)})
+      RETURNING id, author_name AS "authorName", name,
+                configuration_class AS "configurationClass", description,
+                selected_part_ids AS "selectedPartIds", parts_snapshot AS parts,
+                checks_snapshot AS checks, summary_snapshot AS summary,
+                created_at AS "createdAt"
+    `;
+    if (!row) throw new Error("CONFIGURATION_INSERT_FAILED");
+    return { ...row, createdAt: new Date(row.createdAt).toISOString() } as PublishedConfiguration;
   }
 
   async getAdminByUsername(username: string): Promise<AdminUser | undefined> { const [u] = await this.sql<any[]>`SELECT id,username,password_hash AS "passwordHash",status FROM admin_users WHERE username=${username}`; return u; }

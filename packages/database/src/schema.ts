@@ -113,8 +113,25 @@ export const analyticsEvents = pgTable("analytics_events", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 }, (table) => [index("analytics_events_name_created_idx").on(table.eventName, table.createdAt)]);
 
+export const publishedConfigurations = pgTable("published_configurations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  anonymousId: uuid("anonymous_id").notNull(),
+  authorName: varchar("author_name", { length: 40 }).notNull(),
+  name: varchar("name", { length: 80 }).notNull(),
+  configurationClass: varchar("configuration_class", { length: 32 }).notNull(),
+  description: varchar("description", { length: 200 }).notNull().default(""),
+  selectedPartIds: jsonb("selected_part_ids").$type<Record<string, string>>().notNull(),
+  partsSnapshot: jsonb("parts_snapshot").$type<Part[]>().notNull(),
+  checksSnapshot: jsonb("checks_snapshot").$type<CompatibilityResult[]>().notNull(),
+  summarySnapshot: jsonb("summary_snapshot").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+}, (table) => [
+  index("published_configurations_created_idx").on(table.createdAt),
+  index("published_configurations_class_idx").on(table.configurationClass, table.createdAt)
+]);
+
 export const schema = {
   partCategories, parts, cpuSpecs, motherboardSpecs, memorySpecs, gpuSpecs, caseSpecs,
   coolerSpecs, psuSpecs, storageSpecs, builds, buildItems, buildCheckResults,
-  adminUsers, adminSessions, auditLogs, analyticsEvents
+  adminUsers, adminSessions, auditLogs, analyticsEvents, publishedConfigurations
 };

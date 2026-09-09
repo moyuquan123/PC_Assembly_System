@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(fileURLToPath(new URL("../migrations/0000_initial.sql", import.meta.url)), "utf8");
+const publishedConfigurationsMigration = readFileSync(fileURLToPath(new URL("../migrations/0001_published_configurations.sql", import.meta.url)), "utf8");
 
 describe("initial PostgreSQL migration", () => {
   it.each(["part_categories", "parts", "cpu_specs", "motherboard_specs", "memory_specs", "gpu_specs", "case_specs", "cooler_specs", "psu_specs", "storage_specs", "builds", "build_items", "build_check_results", "admin_users", "admin_sessions", "audit_logs", "analytics_events"])("creates %s", (table) => {
@@ -13,5 +14,11 @@ describe("initial PostgreSQL migration", () => {
     expect(migration).toContain("price_fen integer");
     expect(migration).toContain("share_code_hash varchar(64)");
     expect(migration).toContain("id_hash varchar(64)");
+  });
+
+  it("adds persistent user-submitted configurations without exposing anonymous identifiers", () => {
+    expect(publishedConfigurationsMigration).toContain("CREATE TABLE IF NOT EXISTS published_configurations");
+    expect(publishedConfigurationsMigration).toContain("anonymous_id uuid NOT NULL");
+    expect(publishedConfigurationsMigration).toContain("parts_snapshot jsonb NOT NULL");
   });
 });

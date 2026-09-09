@@ -11,11 +11,22 @@ function apiResponse(data: unknown, status = 200) {
 }
 
 function installApiMock() {
+  const publishedConfigurations: unknown[] = [];
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/v1/categories") return apiResponse(categories);
     if (url === "/api/v1/parts") return apiResponse(seedParts);
     if (url === "/api/v1/events") return apiResponse({ accepted: true }, 201);
+    if (url === "/api/v1/configurations" && (!init?.method || init.method === "GET")) return apiResponse(publishedConfigurations);
+    if (url === "/api/v1/configurations" && init?.method === "POST") {
+      const payload = JSON.parse(String(init.body));
+      const parts = getPartsByIds(payload.selectedPartIds, seedParts);
+      const usage = payload.configurationClass === "办公入门" ? "办公" : payload.configurationClass === "内容创作" ? "内容创作" : "游戏";
+      const snapshot = { name: payload.name, budgetFen: Number.MAX_SAFE_INTEGER, usage: usage as "办公" | "内容创作" | "游戏", parts };
+      const published = { id: "00000000-0000-4000-8000-000000000002", ...payload, anonymousId: undefined, parts, checks: checkCompatibility(snapshot), summary: summarizeBuild(snapshot), createdAt: new Date().toISOString() };
+      publishedConfigurations.unshift(published);
+      return apiResponse(published, 201);
+    }
     if (url === "/api/v1/recommendations" && init?.method === "POST") {
       const payload = JSON.parse(String(init.body));
       return apiResponse({ recommendationVersion: "test", ruleVersion: "test", recommendations: recommendBuilds(seedParts, payload) });
@@ -61,23 +72,18 @@ describe("PC assembly product flow", () => {
     expect(screen.getByRole("heading", { name: "选择显卡" })).toBeInTheDocument();
   });
 
-  it("filters the configuration library and imports a complete template", async () => {
+  it("browses individual parts by category and brand", async () => {
     const user = userEvent.setup();
     renderApp("/configurations");
 
     expect(await screen.findByRole("heading", { name: "配置总览" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "共 8 套方案" })).toBeInTheDocument();
-    await user.click(within(screen.getByRole("group", { name: "品牌平台" })).getByRole("button", { name: "AMD" }));
-    await user.click(within(screen.getByRole("group", { name: "配置分类" })).getByRole("button", { name: "内容创作" }));
-    expect(screen.getByRole("heading", { name: "共 1 套方案" })).toBeInTheDocument();
-    expect(screen.getByText("AMD 内容创作配置")).toBeInTheDocument();
-    expect(screen.queryByText("Intel 内容创作配置")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "查看配置" }));
-    expect(screen.getByRole("dialog", { name: "AMD 内容创作配置" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "采用此配置" }));
-    expect(await screen.findByRole("heading", { name: "选择CPU" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("配置库方案已导入");
+    expect(screen.getByRole("heading", { name: "处理器 CPU" })).toBeInTheDocument();
+    await user.click(within(screen.getByRole("group", { name: "品牌筛选" })).getByRole("button", { name: "Intel" }));
+    expect(screen.getByText("酷睿 i5-14600KF")).toBeInTheDocument();
+    expect(screen.queryByText("锐龙 5 7600X")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /显卡/ }));
+    expect(screen.getByRole("heading", { name: "显卡" })).toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "品牌筛选" })).getByRole("button", { name: "华硕" })).toBeInTheDocument();
   });
 
   it("saves a versioned local draft and shows it under My Builds", async () => {
@@ -100,18 +106,23 @@ describe("PC assembly product flow", () => {
     await waitFor(() => expect((screen.getByLabelText("分享链接已生成") as HTMLInputElement).value).toContain("/builds/abcdefghijklmnop"));
   });
 
-  it("generates three smart recommendations and imports one into the builder", async () => {
+  it("uploads a complete user configuration and shows it in configuration plans", async () => {
     const user = userEvent.setup();
+    window.localStorage.setItem("pc-assembly-build-draft", JSON.stringify({ schemaVersion: 1, name: "完整配置", budgetFen: 900000, usage: "游戏", selectedPartIds: { cpu: "cpu-7600x", motherboard: "mb-b650", gpu: "gpu-4060ti", memory: "ram-fury", storage: "ssd-tiplus", psu: "psu-g7", case: "case-air100", cooler: "cooler-pa120" }, updatedAt: new Date().toISOString() }));
     renderApp("/recommend");
 
-    await user.click(screen.getByRole("button", { name: /生成三套推荐/ }));
-    expect(await screen.findByRole("heading", { name: "均衡方案" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "性能优先" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "性价比优先" })).toBeInTheDocument();
-    await user.click(screen.getAllByRole("button", { name: /采用并继续调整/ })[0]!);
+    expect(await screen.findByRole("heading", { name: "配置方案" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "上传我的配置" }));
+    expect(screen.getByRole("dialog", { name: "上传我的配置" })).toHaveTextContent("8 / 8");
+    await user.type(screen.getByLabelText("你的称呼"), "小明");
+    await user.clear(screen.getByLabelText("方案名称"));
+    await user.type(screen.getByLabelText("方案名称"), "我的 2K 游戏主机");
+    await user.type(screen.getByLabelText("推荐理由（选填）"), "适合主流 2K 游戏。" );
+    await user.click(screen.getByRole("button", { name: "检查并上传" }));
 
-    expect(await screen.findByRole("heading", { name: "选择CPU" })).toBeInTheDocument();
-    expect(screen.getAllByText("8 / 8").length).toBeGreaterThan(0);
-    expect(screen.getByRole("status")).toHaveTextContent("推荐配置已导入");
+    expect(await screen.findByText("我的 2K 游戏主机")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("配置已通过检查并发布");
+    await user.click(within(screen.getByRole("group", { name: "方案来源" })).getByRole("button", { name: "用户投稿" }));
+    expect(screen.getByRole("heading", { name: "共 1 套方案" })).toBeInTheDocument();
   });
 });

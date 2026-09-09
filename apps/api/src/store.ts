@@ -6,8 +6,9 @@ import type {
   AdminPartCreate,
   AdminPartPatch
 } from "@pc-assembly/contracts";
+import type { PublishedConfigurationInput } from "@pc-assembly/contracts";
 import { seedParts } from "@pc-assembly/domain";
-import type { CompatibilityResult, Part } from "@pc-assembly/domain";
+import type { BuildSummary, CompatibilityResult, Part } from "@pc-assembly/domain";
 
 export interface AdminUser {
   id: string;
@@ -33,6 +34,19 @@ export interface StoredBuild {
   checks: CompatibilityResult[];
 }
 
+export interface PublishedConfiguration {
+  id: string;
+  authorName: string;
+  name: string;
+  configurationClass: PublishedConfigurationInput["configurationClass"];
+  description: string;
+  createdAt: string;
+  selectedPartIds: PublishedConfigurationInput["selectedPartIds"];
+  parts: Part[];
+  checks: CompatibilityResult[];
+  summary: BuildSummary;
+}
+
 export interface Store {
   listParts(query: PartsQuery, includeInactive?: boolean): Promise<Part[]>;
   getPart(id: string, includeInactive?: boolean): Promise<Part | undefined>;
@@ -40,6 +54,8 @@ export interface Store {
   updatePart(id: string, patch: AdminPartPatch): Promise<Part | undefined>;
   saveBuild(shareCodeHash: string, input: BuildInput, parts: Part[], checks: CompatibilityResult[], ruleVersion: string): Promise<StoredBuild>;
   getBuildByShareHash(shareCodeHash: string): Promise<StoredBuild | undefined>;
+  listPublishedConfigurations(): Promise<PublishedConfiguration[]>;
+  savePublishedConfiguration(input: PublishedConfigurationInput, parts: Part[], checks: CompatibilityResult[], summary: BuildSummary): Promise<PublishedConfiguration>;
   getAdminByUsername(username: string): Promise<AdminUser | undefined>;
   getAdminById(id: string): Promise<AdminUser | undefined>;
   upsertAdmin(username: string, passwordHash: string): Promise<AdminUser>;
@@ -55,6 +71,7 @@ export interface Store {
 export class MemoryStore implements Store {
   private readonly parts = new Map(seedParts.map((part) => [part.id, structuredClone(part)]));
   private readonly builds = new Map<string, StoredBuild>();
+  private readonly publishedConfigurations = new Map<string, PublishedConfiguration>();
   private readonly users = new Map<string, AdminUser>();
   private readonly sessions = new Map<string, AdminSession>();
   readonly audits: Array<Record<string, unknown>> = [];
@@ -106,6 +123,29 @@ export class MemoryStore implements Store {
   async getBuildByShareHash(shareCodeHash: string): Promise<StoredBuild | undefined> {
     const found = this.builds.get(shareCodeHash);
     return found ? structuredClone(found) : undefined;
+  }
+
+  async listPublishedConfigurations(): Promise<PublishedConfiguration[]> {
+    return [...this.publishedConfigurations.values()]
+      .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map((configuration) => structuredClone(configuration));
+  }
+
+  async savePublishedConfiguration(input: PublishedConfigurationInput, parts: Part[], checks: CompatibilityResult[], summary: BuildSummary): Promise<PublishedConfiguration> {
+    const configuration: PublishedConfiguration = {
+      id: randomUUID(),
+      authorName: input.authorName,
+      name: input.name,
+      configurationClass: input.configurationClass,
+      description: input.description,
+      createdAt: new Date().toISOString(),
+      selectedPartIds: structuredClone(input.selectedPartIds),
+      parts: structuredClone(parts),
+      checks: structuredClone(checks),
+      summary: structuredClone(summary)
+    };
+    this.publishedConfigurations.set(configuration.id, configuration);
+    return structuredClone(configuration);
   }
 
   async getAdminByUsername(username: string): Promise<AdminUser | undefined> {

@@ -1,4 +1,4 @@
-import { FolderOpen, LogIn, Save, Sparkles } from "lucide-react";
+import { FolderOpen, LogIn, Save } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 function BrandMark() {
@@ -19,7 +19,7 @@ export default function AppHeader({ onSave }: { onSave: () => void }) {
       <nav className="main-nav" aria-label="主导航">
         <NavLink to="/" className={({ isActive }) => isActive || isBuilder ? "active" : ""}>开始装机</NavLink>
         <NavLink to="/configurations">配置总览</NavLink>
-        <NavLink to="/recommend"><Sparkles size={15} />智能推荐</NavLink>
+        <NavLink to="/recommend">配置方案</NavLink>
         <NavLink to="/saved">我的配置</NavLink>
       </nav>
       {isAdmin ? (

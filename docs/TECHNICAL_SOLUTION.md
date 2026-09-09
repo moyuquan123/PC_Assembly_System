@@ -34,6 +34,7 @@
 - 支持八类核心配件选择、即时预算和功耗汇总。
 - 对产品文档列出的兼容规则给出兼容、警告或不兼容结论。
 - 支持匿名用户本地草稿、服务端配置保存和不可枚举的分享链接。
+- 支持按配件类别与品牌浏览目录，并将通过完整性和兼容检查的匿名用户配置公开投稿。
 - 支持管理员维护配件、价格、结构化规格和上下架状态。
 - 根据预算、用途和偏好生成三套完整、可解释且经过兼容复核的推荐方案。
 - 支持桌面端和移动端，核心交互具备自动化回归测试。
@@ -94,6 +95,8 @@ tests/
 | --- | --- | --- |
 | `/` | 预算、用途和开始入口 | 公开 |
 | `/builder` | 装机工作台 | 公开 |
+| `/configurations` | 单个配件分类与品牌总览 | 公开 |
+| `/recommend` | 官方与用户投稿的完整配置方案 | 公开 |
 | `/builds/:shareCode` | 分享配置单 | 公开但不可枚举 |
 | `/saved` | 当前浏览器保存的草稿 | 公开 |
 | `/admin/login` | 管理员登录 | 公开 |
@@ -106,7 +109,7 @@ tests/
 
 - 表单临时状态、当前步骤和弹窗状态使用 React 本地状态。
 - 当前配置选择使用领域对象 `BuildDraft`，并写入带版本号的 `localStorage` 草稿。
-- 配件列表、筛选结果和分享配置使用 TanStack Query 管理。
+- 配件列表、用户投稿列表、筛选结果和分享配置使用 TanStack Query 管理。
 - 不在 MVP 引入 Redux；当出现多页面复杂客户端工作流且 React 状态难以维护时再评估。
 
 本地草稿格式必须包含 `schemaVersion`。读取旧版本失败时保留原数据并提示用户重新开始，不能静默产生错误配置。
@@ -127,6 +130,7 @@ tests/
 - `compatibility`：权威兼容校验与规则版本。
 - `recommendations`：约束搜索、用途评分、方案解释与推荐版本。
 - `builds`：配置保存、分享和读取。
+- `published-configurations`：用户配置投稿、服务端复核和公开列表。
 - `admin-auth`：管理员登录、会话和退出。
 - `admin-catalog`：配件新增、编辑、上下架和图片管理。
 - `analytics`：匿名产品事件采集。
@@ -143,6 +147,8 @@ tests/
 | `POST /api/v1/recommendations` | 生成三套智能推荐方案 | 公开、限流 |
 | `POST /api/v1/builds` | 保存并生成分享码 | 公开、限流 |
 | `GET /api/v1/builds/:shareCode` | 获取分享配置 | 公开 |
+| `GET /api/v1/configurations` | 获取用户投稿的完整配置 | 公开 |
+| `POST /api/v1/configurations` | 检查并发布当前完整配置 | 公开、同源校验、严格限流 |
 | `POST /api/v1/admin/sessions` | 管理员登录 | 公开、严格限流 |
 | `DELETE /api/v1/admin/sessions/current` | 管理员退出 | 管理员 |
 | `POST /api/v1/admin/parts` | 新增配件 | 管理员 |
@@ -172,6 +178,7 @@ API 使用 JSON，统一返回 `requestId`。业务错误返回稳定错误码�
 | `builds` | `id`, `share_code_hash`, `name`, `budget_fen`, `usage`, `rule_version`, `created_at` | 已保存配置 |
 | `build_items` | `build_id`, `category_id`, `part_id`, `price_snapshot_fen`, `part_snapshot` | 配置项和历史快照 |
 | `build_check_results` | `build_id`, `rule_id`, `level`, `message`, `details` | 保存时的兼容结果 |
+| `published_configurations` | `anonymous_id`, `author_name`, `name`, `configuration_class`, `selected_part_ids`, `parts_snapshot`, `checks_snapshot`, `summary_snapshot` | 通过复核的用户公开投稿 |
 | `admin_users` | `id`, `username`, `password_hash`, `status` | 管理员 |
 | `admin_sessions` | `id_hash`, `admin_user_id`, `expires_at`, `last_seen_at` | 可撤销后台会话 |
 | `audit_logs` | `actor_id`, `action`, `target_type`, `target_id`, `changes`, `created_at` | 后台变更追踪 |
@@ -187,6 +194,7 @@ API 使用 JSON，统一返回 `requestId`。业务错误返回稳定错误码�
 - 配置单保存名称、价格和关键规格快照，确保配件改价或下架后历史分享仍可解释。
 - `shareCode` 使用密码学安全随机值，数据库只保存其哈希；禁止使用递增 ID 作为公开分享地址。
 - 所有公开查询必须过滤未上架配件，但历史分享允许读取自身快照。
+- 投稿中的 `anonymous_id` 仅用于匿名产品标识，不随公开配置响应返回；公开昵称由用户主动填写。
 
 ## 8. 兼容性引擎
 
@@ -255,6 +263,10 @@ interface CompatibilityResult {
 
 首期分享链接为“获得链接即可查看”，不提供搜索、列表或公开索引入口。后续增加账号体系时，可以为配置单补充所有权，而不改变公开分享模型。
 
+### 9.1 用户配置投稿
+
+用户点击“上传我的配置”后，前端只提交当前草稿中的八类配件 ID、公开称呼、方案名称、分类和可选推荐理由。API 再次读取当前在售配件，拒绝缺项、分类错位、下架或明确不兼容的组合，并把通过检查的配件、规则结果和汇总快照写入 `published_configurations`。列表最多返回最近 200 条投稿，普通用户无需账号；第一版不提供评论、点赞、编辑或删除等社区功能。
+
 ## 10. 管理后台与安全
 
 ### 10.1 管理员认证
@@ -293,6 +305,7 @@ interface CompatibilityResult {
 | `build_shared` | 完成度、是否有警告 |
 | `recommendation_generated` | 用途、预算区间、返回方案数 |
 | `recommendation_applied` | 推荐策略、总价区间 |
+| `configuration_published` | 配置分类、总价区间 |
 
 浏览器首次使用时生成随机 `anonymousId`，不做设备指纹识别，不采集精确 IP 作为分析属性。事件属性使用白名单校验，设置保留期限，并在隐私政策中说明用途。
 

@@ -77,6 +77,16 @@ export const buildInputSchema = z.object({
   selectedPartIds: selectedPartIdsSchema
 });
 
+export const configurationClassSchema = z.enum(["办公入门", "主流游戏", "高性能游戏", "内容创作"]);
+export const publishedConfigurationInputSchema = z.object({
+  anonymousId: z.string().uuid(),
+  authorName: z.string().trim().min(1).max(40),
+  name: z.string().trim().min(2).max(80),
+  configurationClass: configurationClassSchema,
+  description: z.string().trim().max(200).default(""),
+  selectedPartIds: selectedPartIdsSchema
+});
+
 export const compatibilityCheckSchema = z.object({ selectedPartIds: selectedPartIdsSchema });
 export const recommendationInputSchema = z.object({
   budgetFen: z.number().int().min(200_000).max(10_000_000),
@@ -104,7 +114,7 @@ export const imageUploadRequestSchema = z.object({
 });
 
 export const analyticsEventSchema = z.object({
-  eventName: z.enum(["build_started", "part_selected", "compatibility_triggered", "part_changed_after_warning", "build_completed", "build_saved_local", "build_shared", "recommendation_generated", "recommendation_applied"]),
+  eventName: z.enum(["build_started", "part_selected", "compatibility_triggered", "part_changed_after_warning", "build_completed", "build_saved_local", "build_shared", "recommendation_generated", "recommendation_applied", "configuration_published"]),
   anonymousId: z.string().uuid(),
   buildId: z.string().uuid().optional(),
   properties: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({})
@@ -112,6 +122,8 @@ export const analyticsEventSchema = z.object({
 
 export type PartsQuery = z.infer<typeof partsQuerySchema>;
 export type BuildInput = z.infer<typeof buildInputSchema>;
+export type ConfigurationClass = z.infer<typeof configurationClassSchema>;
+export type PublishedConfigurationInput = z.infer<typeof publishedConfigurationInputSchema>;
 export type RecommendationInput = z.infer<typeof recommendationInputSchema>;
 export type AdminLogin = z.infer<typeof adminLoginSchema>;
 export type AdminPartCreate = z.infer<typeof adminPartCreateSchema>;

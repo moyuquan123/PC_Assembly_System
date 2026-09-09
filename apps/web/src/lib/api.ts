@@ -1,4 +1,4 @@
-import type { AnalyticsEventInput, BuildInput, PartsQuery, RecommendationInput } from "@pc-assembly/contracts";
+import type { AnalyticsEventInput, BuildInput, ConfigurationClass, PartsQuery, PublishedConfigurationInput, RecommendationInput } from "@pc-assembly/contracts";
 import type { BuildSummary, Category, CompatibilityResult, Part, RecommendedBuild } from "@pc-assembly/domain";
 
 interface ApiEnvelope<T> { requestId: string; data: T; }
@@ -53,6 +53,27 @@ export function createSharedBuild(input: BuildInput): Promise<SavedBuildResponse
 
 export function getSharedBuild(shareCode: string): Promise<SavedBuildResponse> {
   return apiRequest(`/api/v1/builds/${encodeURIComponent(shareCode)}`);
+}
+
+export interface PublishedConfigurationResponse {
+  id: string;
+  authorName: string;
+  name: string;
+  configurationClass: ConfigurationClass;
+  description: string;
+  createdAt: string;
+  selectedPartIds: PublishedConfigurationInput["selectedPartIds"];
+  parts: Part[];
+  checks: CompatibilityResult[];
+  summary: BuildSummary;
+}
+
+export function getPublishedConfigurations(): Promise<PublishedConfigurationResponse[]> {
+  return apiRequest("/api/v1/configurations");
+}
+
+export function publishConfiguration(input: PublishedConfigurationInput): Promise<PublishedConfigurationResponse> {
+  return apiRequest("/api/v1/configurations", { method: "POST", body: JSON.stringify(input) });
 }
 
 export interface RecommendationsResponse {

@@ -38,55 +38,42 @@ test("creates a compatible build and opens its server-backed share page", async 
   expect(pageErrors).toEqual([]);
 });
 
-test("generates a smart recommendation and imports it into the builder", async ({ page }) => {
+test("adopts an official plan and publishes it as a user configuration", async ({ page }) => {
   await page.goto("/recommend");
-  await expect(page.getByRole("heading", { name: "告诉我们目标，获得三套可靠配置" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "配置方案" })).toBeVisible();
 
-  await page.getByLabel("整机预算").fill("9000");
-  await page.getByRole("button", { name: "内容创作" }).click();
-  await page.getByRole("button", { name: "生成三套推荐" }).click();
-
-  await expect(page.getByRole("heading", { name: "均衡方案" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "性能优先" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "性价比优先" })).toBeVisible();
-  await page.getByRole("button", { name: "采用并继续调整" }).first().click();
-
+  const officialRow = page.getByRole("row", { name: /AMD 主流游戏配置/ });
+  await officialRow.getByRole("button", { name: "采用配置" }).click();
   await expect(page.getByRole("heading", { name: "选择CPU" })).toBeVisible();
-  await expect(page.getByText("推荐配置已导入，可继续调整配件")).toBeVisible();
-  const importedMobileSummary = page.locator(".mobile-summary-button");
-  if (await importedMobileSummary.isVisible()) {
-    await importedMobileSummary.click();
-    await expect(page.getByRole("dialog", { name: "均衡方案 · 内容创作主机" })).toBeVisible();
-    await expect(page.locator(".modal-build-row:not(.missing)")).toHaveCount(8);
-  } else {
-    await expect(page.getByText("8 / 8").first()).toBeVisible();
-  }
+  await expect(page.getByText("配置库方案已导入，可继续调整配件")).toBeVisible();
+
+  await page.getByRole("link", { name: "配置方案" }).click();
+  await page.getByRole("button", { name: "上传我的配置" }).click();
+  await expect(page.getByRole("dialog", { name: "上传我的配置" })).toContainText("8 / 8");
+  await page.getByLabel("你的称呼").fill("验收用户");
+  await page.getByLabel("方案名称").fill("端到端测试配置");
+  await page.getByLabel("推荐理由（选填）").fill("用于验证用户配置投稿流程。" );
+  await page.getByRole("button", { name: "检查并上传" }).click();
+
+  await expect(page.getByText("配置已通过检查并发布")).toBeVisible();
+  await page.getByRole("group", { name: "方案来源" }).getByRole("button", { name: "用户投稿" }).click();
+  await expect(page.getByRole("row", { name: /端到端测试配置/ }).first()).toBeVisible();
 });
 
-test("filters the configuration library and adopts a complete build", async ({ page }) => {
+test("filters individual parts by category and brand", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("link", { name: "配置总览" }).click();
   await expect(page).toHaveURL(/\/configurations$/);
   await expect(page.getByRole("heading", { name: "配置总览" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "共 8 套方案" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "处理器 CPU" })).toBeVisible();
+  await page.getByRole("group", { name: "品牌筛选" }).getByRole("button", { name: "Intel" }).click();
+  await expect(page.getByRole("row", { name: /酷睿 i5-14600KF/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /锐龙 5 7600X/ })).toHaveCount(0);
 
-  await page.getByRole("group", { name: "品牌平台" }).getByRole("button", { name: "Intel" }).click();
-  await page.getByRole("group", { name: "配置分类" }).getByRole("button", { name: "主流游戏" }).click();
-  await expect(page.getByRole("heading", { name: "共 1 套方案" })).toBeVisible();
-  const row = page.getByRole("row", { name: /Intel 主流游戏配置/ });
-  await expect(row).toBeVisible();
-  await row.getByRole("button", { name: "查看配置" }).click();
-  await expect(page.getByRole("dialog", { name: "Intel 主流游戏配置" })).toBeVisible();
-  await page.getByRole("button", { name: "采用此配置" }).click();
-
-  await expect(page.getByRole("heading", { name: "选择CPU" })).toBeVisible();
-  await expect(page.getByText("配置库方案已导入，可继续调整配件")).toBeVisible();
-  const progress = page.locator(".progress-summary");
-  if (await progress.isVisible()) {
-    await expect(progress).toContainText("8 / 8");
-  } else {
-    await page.locator(".mobile-summary-button").click();
-    await expect(page.getByRole("dialog", { name: "Intel 主流游戏配置" })).toBeVisible();
-    await expect(page.locator(".modal-build-row:not(.missing)")).toHaveCount(8);
-  }
+  await page.getByRole("navigation", { name: "配件类别" }).getByRole("button", { name: /显卡/ }).click();
+  await expect(page.getByRole("heading", { name: "显卡", exact: true })).toBeVisible();
+  await page.getByRole("group", { name: "品牌筛选" }).getByRole("button", { name: "蓝宝石" }).click();
+  await expect(page.getByRole("row", { name: /RX 7800 XT 白金版/ })).toBeVisible();
+  await page.getByRole("row", { name: /RX 7800 XT 白金版/ }).getByRole("button", { name: "查看详情" }).click();
+  await expect(page.getByRole("dialog", { name: "RX 7800 XT 白金版" })).toBeVisible();
 });

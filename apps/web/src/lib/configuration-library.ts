@@ -14,6 +14,10 @@ export interface MarketConfiguration {
   summary: BuildSummary;
   checks: CompatibilityResult[];
   referenceBudgetFen: number;
+  source: "official" | "community";
+  authorName: string;
+  description: string;
+  createdAt?: string;
 }
 
 interface ConfigurationDefinition {
@@ -45,7 +49,10 @@ export function createConfigurationLibrary(catalog: Part[]): MarketConfiguration
       ...definition,
       summary,
       checks: checkCompatibility(snapshot),
-      referenceBudgetFen: Math.ceil(summary.totalFen / 50_000) * 50_000
+      referenceBudgetFen: Math.ceil(summary.totalFen / 50_000) * 50_000,
+      source: "official" as const,
+      authorName: "官方",
+      description: "由当前配件库生成并通过兼容性规则复核。"
     }];
   }).toSorted((left, right) => left.summary.totalFen - right.summary.totalFen);
 }

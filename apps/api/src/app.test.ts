@@ -86,6 +86,56 @@ describe("public API", () => {
     expect(response.json().data.recommendations.every((item: any) => item.parts.length === 8)).toBe(true);
     expect(response.json().data.recommendations.flatMap((item: any) => item.checks).some((check: any) => check.level === "incompatible")).toBe(false);
   });
+
+  it("publishes and lists a complete compatible user configuration", async () => {
+    const { app } = await testApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/configurations",
+      headers: { origin: "http://127.0.0.1:4173" },
+      payload: {
+        anonymousId: "27a25667-b7a0-4fc1-8c29-b0be0e7a250d",
+        authorName: "小明",
+        name: "我的 2K 游戏主机",
+        configurationClass: "主流游戏",
+        description: "兼顾游戏性能与升级空间。",
+        selectedPartIds: completeBuild.selectedPartIds
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data).toEqual(expect.objectContaining({ authorName: "小明", name: "我的 2K 游戏主机" }));
+    expect(response.json().data.parts).toHaveLength(8);
+    expect(response.json().data.anonymousId).toBeUndefined();
+
+    const listed = await app.inject({ method: "GET", url: "/api/v1/configurations" });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().data).toHaveLength(1);
+    expect(listed.json().data[0].summary.progress).toBe(8);
+  });
+
+  it("blocks incomplete or incompatible user configurations", async () => {
+    const { app } = await testApp();
+    const base = {
+      anonymousId: "27a25667-b7a0-4fc1-8c29-b0be0e7a250d",
+      authorName: "测试用户",
+      name: "待检查配置",
+      configurationClass: "主流游戏",
+      description: ""
+    };
+    const incomplete = await app.inject({ method: "POST", url: "/api/v1/configurations", headers: { origin: "http://127.0.0.1:4173" }, payload: { ...base, selectedPartIds: { cpu: "cpu-7600x" } } });
+    expect(incomplete.statusCode).toBe(400);
+    expect(incomplete.json().error.code).toBe("CONFIGURATION_INCOMPLETE");
+
+    const incompatible = await app.inject({
+      method: "POST",
+      url: "/api/v1/configurations",
+      headers: { origin: "http://127.0.0.1:4173" },
+      payload: { ...base, selectedPartIds: { ...completeBuild.selectedPartIds, motherboard: "mb-b760" } }
+    });
+    expect(incompatible.statusCode).toBe(409);
+    expect(incompatible.json().error.code).toBe("CONFIGURATION_INCOMPATIBLE");
+  });
 });
 
 describe("admin API", () => {
