@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminLoginSchema, buildInputSchema, configurationCommentSchema, configurationKeySchema, configurationVoteSchema, partSchema, publishedConfigurationInputSchema, recommendationInputSchema, userRegistrationSchema } from "./index.js";
+import { adminLoginSchema, buildInputSchema, configurationCommentSchema, configurationKeySchema, configurationVoteSchema, partSchema, publishedConfigurationInputSchema, recommendationInputSchema, userProfilePatchSchema, userRegistrationSchema } from "./index.js";
 
 describe("API contracts", () => {
   it("rejects floating-point budgets and incomplete credentials", () => {
@@ -40,6 +40,8 @@ describe("API contracts", () => {
   it("validates community account and engagement inputs", () => {
     expect(userRegistrationSchema.safeParse({ username: "pc_fan", displayName: "装机玩家", password: "Password123!" }).success).toBe(true);
     expect(userRegistrationSchema.safeParse({ username: "中文名", displayName: "装机玩家", password: "Password123!" }).success).toBe(false);
+    expect(userProfilePatchSchema.safeParse({ displayName: "装机玩家", bio: "喜欢安静的小主机", location: "上海" }).success).toBe(true);
+    expect(userProfilePatchSchema.safeParse({ displayName: "装机玩家", bio: "x".repeat(121), location: "" }).success).toBe(false);
     expect(configurationKeySchema.safeParse("official:amd-mainstream-gaming").success).toBe(true);
     expect(configurationKeySchema.safeParse("community:27a25667-b7a0-4fc1-8c29-b0be0e7a250d").success).toBe(true);
     expect(configurationVoteSchema.safeParse({ value: -1 }).success).toBe(true);

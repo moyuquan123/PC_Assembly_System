@@ -167,6 +167,33 @@ describe("public API", () => {
     expect((await app.inject({ method: "GET", url: "/api/v1/users/me", headers: { cookie: loginCookie! } })).statusCode).toBe(401);
   });
 
+  it("updates a user profile and returns the personal dashboard", async () => {
+    const { app } = await testApp();
+    const { cookie } = await registerUser(app, "profile_user", "资料用户");
+    const headers = { origin: "http://127.0.0.1:4173", cookie: cookie! };
+    const updated = await app.inject({ method: "PATCH", url: "/api/v1/users/me", headers, payload: { displayName: "装机小明", bio: "喜欢研究高性价比电脑", location: "上海" } });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().data).toEqual(expect.objectContaining({ displayName: "装机小明", bio: "喜欢研究高性价比电脑", location: "上海" }));
+
+    const published = await app.inject({ method: "POST", url: "/api/v1/configurations", headers, payload: { name: "个人主页配置", configurationClass: "主流游戏", description: "", selectedPartIds: completeBuild.selectedPartIds } });
+    const key = `community:${published.json().data.id}`;
+    await app.inject({ method: "POST", url: `/api/v1/configurations/${key}/vote`, headers, payload: { value: 1 } });
+    await app.inject({ method: "POST", url: "/api/v1/configurations/official:amd-office-entry/comments", headers, payload: { content: "适合办公" } });
+
+    const dashboard = await app.inject({ method: "GET", url: "/api/v1/users/me/dashboard", headers: { cookie: cookie! } });
+    expect(dashboard.statusCode).toBe(200);
+    expect(dashboard.json().data.stats).toEqual({ publishedCount: 1, recommendationsReceived: 1, commentsWritten: 1 });
+    expect(dashboard.json().data.configurations[0].authorName).toBe("装机小明");
+    expect(dashboard.json().data.activities).toHaveLength(2);
+  });
+
+  it("reports when the live catalog source is not configured", async () => {
+    const { app } = await testApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/catalog/freshness" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toEqual(expect.objectContaining({ mode: "local", status: "disabled" }));
+  });
+
   it("tracks impressions and clicks, then enforces one mutable vote and authenticated comments", async () => {
     const { app } = await testApp();
     const key = "official:amd-mainstream-gaming";

@@ -1,10 +1,12 @@
-import { Box, ChevronRight, CircuitBoard, Cpu, Fan, HardDrive, MemoryStick, Search, Server, Zap } from "lucide-react";
+import { Box, ChevronRight, CircuitBoard, Clock3, Cpu, Fan, HardDrive, MemoryStick, RefreshCw, Search, Server, Zap } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { categories } from "@pc-assembly/domain";
 import type { CategoryCode, Part } from "@pc-assembly/domain";
 import PartDetailModal from "./PartDetailModal";
 import { formatYuan } from "../lib/format";
+import { getCatalogFreshness } from "../lib/api";
 
 const categoryIcons: Record<CategoryCode, LucideIcon> = {
   cpu: Cpu,
@@ -28,6 +30,7 @@ export default function PartsOverviewScreen({ parts, loading, error, onStart }: 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"price-asc" | "price-desc" | "name">("price-asc");
   const [detail, setDetail] = useState<Part | null>(null);
+  const freshness = useQuery({ queryKey: ["catalog-freshness"], queryFn: getCatalogFreshness, refetchInterval: 60_000 });
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase("zh-CN"));
   const activeCategory = categories.find((item) => item.code === category)!;
   const categoryParts = useMemo(() => parts.filter((part) => part.category === category), [category, parts]);
@@ -48,7 +51,7 @@ export default function PartsOverviewScreen({ parts, loading, error, onStart }: 
 
   return <main className="parts-overview-screen">
     <header className="parts-overview-heading">
-      <div><h1>配置总览</h1><p>按配件类别与品牌，浏览当前收录的市售硬件。</p></div>
+      <div><h1>配置总览</h1><p>按配件类别与品牌，浏览当前收录的市售硬件。</p><CatalogFreshnessStatus freshness={freshness.data} /></div>
       <button className="primary-button parts-start-button" type="button" onClick={onStart}>去开始装机 <ChevronRight size={18} /></button>
     </header>
     <div className="parts-overview-layout">
@@ -75,11 +78,26 @@ export default function PartsOverviewScreen({ parts, loading, error, onStart }: 
           <thead><tr><th>产品</th><th>品牌 / 型号</th><th>关键规格</th><th>参考价格</th><th>收录状态</th><th>操作</th></tr></thead>
           <tbody>{visibleParts.map((part) => <PartOverviewRow key={part.id} part={part} Icon={categoryIcons[part.category]} onOpen={setDetail} />)}</tbody>
         </table></div> : <div className="configuration-empty"><Search size={28} /><h3>没有匹配的配件</h3><p>试试切换品牌或更换搜索关键词。</p></div>}
-        <p className="parts-price-note">以上价格为参考价，实际以电商平台和厂商信息为准。</p>
+        <p className="parts-price-note">已接入的数据会按计划自动刷新；价格仍以跳转后的电商平台页面为准。</p>
       </section>
     </div>
     <PartDetailModal part={detail} onClose={() => setDetail(null)} />
   </main>;
+}
+
+function CatalogFreshnessStatus({ freshness }: { freshness: Awaited<ReturnType<typeof getCatalogFreshness>> | undefined }) {
+  if (!freshness) return <span className="catalog-freshness"><Clock3 size={15} />正在读取数据更新时间…</span>;
+  const live = freshness.mode === "live";
+  const time = freshness.lastSuccessfulAt ? formatFreshnessTime(freshness.lastSuccessfulAt) : "尚未同步";
+  return <span className={`catalog-freshness ${freshness.status}`} title={freshness.message}>{live ? <RefreshCw size={15} /> : <Clock3 size={15} />}<strong>{live ? freshness.sourceName : "本地目录"}</strong><i>·</i>{live ? `${time}更新` : "配置授权数据源后自动更新"}</span>;
+}
+
+function formatFreshnessTime(value: string): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes}分钟前`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}小时前`;
+  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(value));
 }
 
 function PartOverviewRow({ part, Icon, onOpen }: { part: Part; Icon: LucideIcon; onOpen: (part: Part) => void }) {

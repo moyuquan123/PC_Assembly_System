@@ -21,7 +21,7 @@ export default function AppHeader({ onSave, user, onAccount }: { onSave: () => v
         <NavLink to="/" className={({ isActive }) => isActive || isBuilder ? "active" : ""}>开始装机</NavLink>
         <NavLink to="/configurations">配置总览</NavLink>
         <NavLink to="/recommend">配置方案</NavLink>
-        <NavLink to="/saved">我的配置</NavLink>
+        <NavLink to="/me">我的</NavLink>
       </nav>
       {isAdmin ? (
         <button className="header-action" type="button" onClick={() => navigate("/")}><FolderOpen size={18} /><span>返回装机</span></button>

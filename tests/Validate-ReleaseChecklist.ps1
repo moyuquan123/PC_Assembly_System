@@ -15,6 +15,7 @@ $requiredPatterns = @(
     "(?m)^## 4\.",
     "(?m)^## 5\.",
     "PostgreSQL",
+    "TAOBAO_APP_KEY",
     "npm run validate",
     "Git SHA"
 )

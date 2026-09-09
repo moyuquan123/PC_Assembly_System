@@ -11,7 +11,7 @@ import BuilderScreen from "./components/BuilderScreen";
 import ConfigurationLibraryScreen from "./components/ConfigurationLibraryScreen";
 import type { ConfigurationSubmissionFields } from "./components/UploadConfigurationModal";
 import PartsOverviewScreen from "./components/PartsOverviewScreen";
-import SavedScreen from "./components/SavedScreen";
+import PersonalCenterScreen from "./components/PersonalCenterScreen";
 import SetupScreen from "./components/SetupScreen";
 import SharedBuildScreen from "./components/SharedBuildScreen";
 import UserAccountModal from "./components/UserAccountModal";
@@ -44,7 +44,7 @@ export default function App() {
   const [toast, setToast] = useState(initial.recoveryMessage ?? "");
   const [accountOpen, setAccountOpen] = useState(false);
   const userQuery = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
-  const partsQuery = useQuery({ queryKey: ["parts"], queryFn: () => getParts() });
+  const partsQuery = useQuery({ queryKey: ["parts"], queryFn: () => getParts(), refetchInterval: 60_000 });
   useQuery({ queryKey: ["categories"], queryFn: getCategories });
   const parts = partsQuery.data ?? [];
 
@@ -104,7 +104,8 @@ export default function App() {
       <Route path="/builder" element={<BuilderScreen draft={draft} parts={parts} loading={partsQuery.isLoading} error={partsQuery.error ? errorMessage(partsQuery.error) : ""} onChoose={choose} onEditSetup={() => navigate("/")} onCopy={copyBuild} onShare={shareBuild} />} />
       <Route path="/configurations" element={<PartsOverviewScreen parts={parts} loading={partsQuery.isLoading} error={partsQuery.error ? errorMessage(partsQuery.error) : ""} onStart={() => navigate("/")} />} />
       <Route path="/recommend" element={<ConfigurationLibraryScreen parts={parts} draft={draft} user={userQuery.data} loading={partsQuery.isLoading} error={partsQuery.error ? errorMessage(partsQuery.error) : ""} onApply={applyLibraryConfiguration} onStart={() => navigate("/builder")} onPublish={uploadConfiguration} onRequireAccount={() => setAccountOpen(true)} />} />
-      <Route path="/saved" element={<SavedScreen savedDraft={savedDraft} parts={parts} onOpen={() => { if (savedDraft) setDraft(savedDraft); navigate("/builder"); }} onStart={() => navigate("/")} />} />
+      <Route path="/me" element={<PersonalCenterScreen user={userQuery.data} savedDraft={savedDraft} parts={parts} onRequireAccount={() => setAccountOpen(true)} onCreate={() => navigate("/")} onOpenDraft={() => { if (savedDraft) setDraft(savedDraft); navigate("/builder"); }} onOpenPublished={() => navigate("/recommend")} />} />
+      <Route path="/saved" element={<Navigate to="/me" replace />} />
       <Route path="/builds/:shareCode" element={<SharedRoute />} />
       <Route path="/admin/login" element={<AdminLoginScreen onLogin={async (username, password) => { await loginAdmin(username, password); navigate("/admin/parts"); }} />} />
       <Route path="/admin/parts" element={<AdminRoute />} />

@@ -1,8 +1,8 @@
 # PC 装机系统 MVP 技术方案
 
 - 文档版本：v1.0
-- 对应产品版本：MVP v0.3（社区互动更新）
-- 更新时间：2026-09-08
+- 对应产品版本：MVP v0.4（个人中心与目录更新）
+- 更新时间：2026-09-09
 - 适用区域：中国大陆
 - 文档状态：实现与验证中
 
@@ -36,7 +36,9 @@
 - 支持匿名用户本地草稿、服务端配置保存和不可枚举的分享链接。
 - 支持按配件类别与品牌浏览目录，并将通过完整性和兼容检查的登录用户配置公开投稿。
 - 支持普通用户注册、登录、评论、推荐/不推荐、展示与点击统计及混合排序。
+- 支持用户编辑公开资料，并汇总自己的草稿、投稿、评论和推荐记录。
 - 支持管理员维护配件、价格、结构化规格和上下架状态。
+- 通过授权开放接口定时核验已收录 CPU、显卡的参考价格，并隔离未知型号供人工审核。
 - 根据预算、用途和偏好生成三套完整、可解释且经过兼容复核的推荐方案。
 - 支持桌面端和移动端，核心交互具备自动化回归测试。
 - 所有生产数据和服务部署在中国大陆可稳定访问的基础设施上。
@@ -99,7 +101,8 @@ tests/
 | `/configurations` | 单个配件分类与品牌总览 | 公开 |
 | `/recommend` | 官方与用户投稿的完整配置方案 | 公开 |
 | `/builds/:shareCode` | 分享配置单 | 公开但不可枚举 |
-| `/saved` | 当前浏览器保存的草稿 | 公开 |
+| `/me` | 个人资料、当前浏览器草稿、投稿和互动记录 | 登录用户；未登录显示引导 |
+| `/saved` | 兼容旧书签，重定向至 `/me` | 公开 |
 | `/admin/login` | 管理员登录 | 公开 |
 | `/admin/parts` | 配件管理 | 管理员 |
 | `/admin/parts/:id` | 配件编辑 | 管理员 |
@@ -133,7 +136,9 @@ tests/
 - `builds`：配置保存、分享和读取。
 - `published-configurations`：用户配置投稿、服务端复核和公开列表。
 - `user-auth`：普通用户注册、登录、会话和退出。
+- `user-profile`：个人资料编辑、配置与互动聚合。
 - `configuration-community`：评论、单用户投票、展示/点击计数与混合评分。
+- `catalog-sync`：授权数据源适配、定时同步、型号匹配和候选隔离。
 - `admin-auth`：管理员登录、会话和退出。
 - `admin-catalog`：配件新增、编辑、上下架和图片管理。
 - `analytics`：匿名产品事件采集。
@@ -155,7 +160,10 @@ tests/
 | `POST /api/v1/users` | 注册普通用户并创建会话 | 公开、同源校验、严格限流 |
 | `POST /api/v1/user-sessions` | 普通用户登录 | 公开、同源校验、严格限流 |
 | `GET /api/v1/users/me` | 获取当前普通用户 | 登录用户 |
+| `PATCH /api/v1/users/me` | 修改显示名称、所在地和简介 | 登录用户、同源校验、限流 |
+| `GET /api/v1/users/me/dashboard` | 获取自己的投稿、评论、推荐和聚合统计 | 登录用户 |
 | `DELETE /api/v1/user-sessions/current` | 普通用户退出 | 登录用户、同源校验 |
+| `GET /api/v1/catalog/freshness` | 获取目录模式、数据源和最近同步状态 | 公开 |
 | `GET /api/v1/configuration-engagement` | 批量获取方案互动指标与当前用户投票 | 公开 |
 | `POST /api/v1/configuration-impressions` | 批量记录列表展示 | 公开、同源校验、限流 |
 | `POST /api/v1/configurations/:key/click` | 记录详情点击 | 公开、同源校验、限流 |
@@ -166,6 +174,7 @@ tests/
 | `DELETE /api/v1/admin/sessions/current` | 管理员退出 | 管理员 |
 | `POST /api/v1/admin/parts` | 新增配件 | 管理员 |
 | `PATCH /api/v1/admin/parts/:id` | 修改配件和上下架状态 | 管理员 |
+| `POST /api/v1/admin/catalog-sync` | 手动触发一次授权目录同步 | 管理员、同源校验、严格限流 |
 | `POST /api/v1/events` | 写入匿名产品事件 | 公开、限流 |
 
 API 使用 JSON，统一返回 `requestId`。业务错误返回稳定错误码，例如 `PART_NOT_FOUND`、`BUILD_INCOMPATIBLE`、`VALIDATION_FAILED`，前端不得依赖可变的中文错误文本判断逻辑。
@@ -192,11 +201,15 @@ API 使用 JSON，统一返回 `requestId`。业务错误返回稳定错误码�
 | `build_items` | `build_id`, `category_id`, `part_id`, `price_snapshot_fen`, `part_snapshot` | 配置项和历史快照 |
 | `build_check_results` | `build_id`, `rule_id`, `level`, `message`, `details` | 保存时的兼容结果 |
 | `published_configurations` | `owner_user_id`, `author_name`, `name`, `configuration_class`, `selected_part_ids`, `parts_snapshot`, `checks_snapshot`, `summary_snapshot` | 通过复核的用户公开投稿 |
-| `user_accounts` | `id`, `username`, `display_name`, `password_hash`, `status` | 普通用户账号 |
+| `user_accounts` | `id`, `username`, `display_name`, `bio`, `location`, `password_hash`, `status` | 普通用户账号与公开资料 |
 | `user_sessions` | `id_hash`, `user_id`, `expires_at` | 普通用户可撤销会话 |
 | `configuration_engagement` | `configuration_key`, `impression_count`, `click_count` | 官方与用户方案的展示、点击汇总 |
 | `configuration_votes` | `configuration_key`, `user_id`, `value` | 单用户唯一推荐/不推荐选择 |
 | `configuration_comments` | `id`, `configuration_key`, `user_id`, `content`, `created_at` | 方案评论 |
+| `catalog_sources` | `code`, `name`, `mode`, `enabled`, `last_success_at`, `last_error` | 授权数据源和新鲜度状态 |
+| `catalog_sync_runs` | `source_id`, `status`, `matched_count`, `candidate_count`, `started_at`, `finished_at` | 同步运行记录 |
+| `part_market_offers` | `part_id`, `source_id`, `external_id`, `price_fen`, `product_url`, `observed_at` | 可追踪的商品报价 |
+| `catalog_sync_candidates` | `source_id`, `external_id`, `title`, `category_code`, `raw_payload`, `review_status` | 未知型号人工审核队列 |
 | `admin_users` | `id`, `username`, `password_hash`, `status` | 管理员 |
 | `admin_sessions` | `id_hash`, `admin_user_id`, `expires_at`, `last_seen_at` | 可撤销后台会话 |
 | `audit_logs` | `actor_id`, `action`, `target_type`, `target_id`, `changes`, `created_at` | 后台变更追踪 |
@@ -215,6 +228,15 @@ API 使用 JSON，统一返回 `requestId`。业务错误返回稳定错误码�
 - 账号用户名规范化为小写，密码只保存 Argon2id 摘要；公开响应仅包含显示名称。
 - `configuration_votes` 使用 `(configuration_key, user_id)` 复合主键，数据库层保证单用户单票。
 - 投票写入使用 UPSERT，互动外键和按方案倒序评论查询均建立索引。
+- 数据源编码唯一；商品报价以 `(source_id, external_id)` 唯一，按 `part_id + observed_at` 建索引；候选以 `(source_id, external_id)` 去重。
+
+### 7.3 目录同步与数据新鲜度
+
+目录同步使用适配器接口隔离具体平台。首版实现淘宝开放平台 `taobao.tbk.dg.material.optional`，只有在服务端同时配置应用 Key、Secret 和推广位 ID 后才启动，默认每 60 分钟执行一次且禁止任务重叠。密钥只存在服务端环境变量中。
+
+每次同步先读取当前上架的 CPU 与显卡，再用品牌、型号精确查询。只有标题包含型号关键标记且通过配件类目与最低合理价格过滤的结果，才写入报价并更新当前参考价；来源原始数据同时保留时间戳以便追踪。宽泛查询发现的其他型号只进入候选队列，不能自动写入 `parts` 或结构化兼容规格。
+
+同步失败保留上一份可用数据并记录错误，公开接口返回 `live` 或 `local` 模式、来源、最近成功时间和状态。前端必须将参考价标记为辅助信息；没有授权配置时明确显示本地维护数据，不虚假宣称实时覆盖。
 
 ## 8. 兼容性引擎
 

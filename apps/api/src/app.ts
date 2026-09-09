@@ -22,6 +22,7 @@ import {
   recommendationInputSchema,
   shareCodeParamsSchema,
   userLoginSchema,
+  userProfilePatchSchema,
   userRegistrationSchema
 } from "@pc-assembly/contracts";
 import type { AnalyticsEventInput } from "@pc-assembly/contracts";
@@ -43,6 +44,7 @@ import { createOpaqueToken, hashToken, SESSION_COOKIE, SESSION_TTL_MS, USER_SESS
 import { MemoryStore } from "./store.js";
 import type { AdminUser, Store, UserAccount } from "./store.js";
 import type { ImageStorage } from "./image-storage.js";
+import type { CatalogSyncService } from "./catalog-sync.js";
 
 declare module "fastify" {
   interface FastifyRequest { admin?: AdminUser; user?: UserAccount; }
@@ -55,6 +57,7 @@ export interface AppOptions {
   allowedOrigins?: string[];
   bootstrapAdmin?: { username: string; password: string };
   imageStorage?: ImageStorage;
+  catalogSync?: CatalogSyncService;
 }
 
 const responseSchema = {
@@ -152,6 +155,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
 
   app.decorate("store", store);
   app.addHook("onClose", async () => store.close());
+  if (options.catalogSync) app.addHook("onClose", async () => options.catalogSync!.stop());
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ApiError) {
@@ -215,6 +219,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     if (!part) throw new ApiError(404, "PART_NOT_FOUND", "没有找到该配件。");
     return data(request, part);
   });
+  app.get("/api/v1/catalog/freshness", { schema: { response: responseSchema } }, async (request) => data(request, await store.getCatalogFreshness()));
   app.post("/api/v1/compatibility/check", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } }, schema: { response: responseSchema } }, async (request) => {
     const input = parse(compatibilityCheckSchema, request.body);
     const parts = await resolveParts(input.selectedPartIds, store);
@@ -276,6 +281,13 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     return data(request, publicUser(user));
   });
   app.get("/api/v1/users/me", { preHandler: requireUser, schema: { response: responseSchema } }, async (request) => data(request, publicUser(request.user!)));
+  app.patch("/api/v1/users/me", { preHandler: [requireUser, requireSameOrigin], config: { rateLimit: { max: 20, timeWindow: "1 minute" } }, schema: { response: responseSchema } }, async (request) => {
+    const input = parse(userProfilePatchSchema, request.body);
+    const user = await store.updateUserProfile(request.user!.id, input);
+    if (!user) throw new ApiError(404, "USER_NOT_FOUND", "没有找到该用户。");
+    return data(request, publicUser(user));
+  });
+  app.get("/api/v1/users/me/dashboard", { preHandler: requireUser, schema: { response: responseSchema } }, async (request) => data(request, await store.getUserDashboard(request.user!.id)));
   app.delete("/api/v1/user-sessions/current", { preHandler: [requireUser, requireSameOrigin], schema: { response: responseSchema } }, async (request, reply) => {
     const token = request.cookies[USER_SESSION_COOKIE];
     if (token) await store.deleteUserSession(hashToken(token));
@@ -360,6 +372,10 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     reply.clearCookie(SESSION_COOKIE, { path: "/api/v1/admin" });
     return data(request, { loggedOut: true });
   });
+  app.post("/api/v1/admin/catalog-sync", { preHandler: [requireAdmin, requireSameOrigin], config: { rateLimit: { max: 4, timeWindow: "10 minutes" } }, schema: { response: responseSchema } }, async (request) => {
+    if (!options.catalogSync) throw new ApiError(503, "CATALOG_SOURCE_DISABLED", "尚未配置授权市场数据源。");
+    return data(request, await options.catalogSync.runOnce());
+  });
   app.get("/api/v1/admin/parts", { preHandler: requireAdmin, schema: { response: responseSchema } }, async (request) => data(request, await store.listParts({}, true)));
   app.post("/api/v1/admin/parts", { preHandler: [requireAdmin, requireSameOrigin], schema: { response: responseSchema } }, async (request, reply) => {
     const input = parse(adminPartCreateSchema, request.body);
@@ -425,5 +441,5 @@ async function assertConfigurationExists(key: string, store: Store): Promise<voi
 }
 
 function publicUser(user: UserAccount) {
-  return { id: user.id, username: user.username, displayName: user.displayName, createdAt: user.createdAt };
+  return { id: user.id, username: user.username, displayName: user.displayName, bio: user.bio, location: user.location, createdAt: user.createdAt };
 }

@@ -1,4 +1,4 @@
-import type { AnalyticsEventInput, BuildInput, ConfigurationClass, PartsQuery, PublishedConfigurationInput, RecommendationInput, UserLogin, UserRegistration } from "@pc-assembly/contracts";
+import type { AnalyticsEventInput, BuildInput, ConfigurationClass, PartsQuery, PublishedConfigurationInput, RecommendationInput, UserLogin, UserProfilePatch, UserRegistration } from "@pc-assembly/contracts";
 import type { BuildSummary, Category, CompatibilityResult, Part, RecommendedBuild } from "@pc-assembly/domain";
 
 interface ApiEnvelope<T> { requestId: string; data: T; }
@@ -74,7 +74,28 @@ export interface PublicUser {
   id: string;
   username: string;
   displayName: string;
+  bio: string;
+  location: string;
   createdAt: string;
+}
+
+export interface UserDashboard {
+  stats: { publishedCount: number; recommendationsReceived: number; commentsWritten: number };
+  configurations: PublishedConfigurationResponse[];
+  activities: Array<{ type: "comment" | "vote"; configurationKey: string; content?: string; value?: -1 | 1; occurredAt: string }>;
+}
+
+export interface CatalogFreshness {
+  sourceCode: string;
+  sourceName: string;
+  mode: "live" | "local";
+  status: "idle" | "syncing" | "healthy" | "failed" | "disabled";
+  lastAttemptAt?: string;
+  lastSuccessfulAt?: string;
+  nextSyncAt?: string;
+  updatedParts: number;
+  candidateCount: number;
+  message: string;
 }
 
 export interface ConfigurationEngagement {
@@ -112,7 +133,10 @@ export function loginUser(input: UserLogin): Promise<PublicUser> {
   return apiRequest("/api/v1/user-sessions", { method: "POST", body: JSON.stringify(input) });
 }
 export function getCurrentUser(): Promise<PublicUser> { return apiRequest("/api/v1/users/me"); }
+export function updateCurrentUser(input: UserProfilePatch): Promise<PublicUser> { return apiRequest("/api/v1/users/me", { method: "PATCH", body: JSON.stringify(input) }); }
+export function getUserDashboard(): Promise<UserDashboard> { return apiRequest("/api/v1/users/me/dashboard"); }
 export function logoutUser(): Promise<{ loggedOut: boolean }> { return apiRequest("/api/v1/user-sessions/current", { method: "DELETE" }); }
+export function getCatalogFreshness(): Promise<CatalogFreshness> { return apiRequest("/api/v1/catalog/freshness"); }
 export function getConfigurationEngagement(keys: string[]): Promise<ConfigurationEngagement[]> {
   return apiRequest(`/api/v1/configuration-engagement?keys=${encodeURIComponent(keys.join(","))}`);
 }

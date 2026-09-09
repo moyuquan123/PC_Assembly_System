@@ -91,6 +91,11 @@ export const userRegistrationSchema = z.object({
   password: z.string().min(8).max(72)
 });
 export const userLoginSchema = userRegistrationSchema.pick({ username: true, password: true });
+export const userProfilePatchSchema = z.object({
+  displayName: z.string().trim().min(2).max(24),
+  bio: z.string().trim().max(120).default(""),
+  location: z.string().trim().max(40).default("")
+});
 export const configurationKeySchema = z.string().regex(/^(official:[a-z0-9-]{3,80}|community:[0-9a-f-]{36})$/);
 export const configurationKeyParamsSchema = z.object({ configurationKey: configurationKeySchema });
 export const configurationEngagementQuerySchema = z.object({ keys: z.string().min(1).max(16_000) });
@@ -137,6 +142,7 @@ export type ConfigurationClass = z.infer<typeof configurationClassSchema>;
 export type PublishedConfigurationInput = z.infer<typeof publishedConfigurationInputSchema>;
 export type UserRegistration = z.infer<typeof userRegistrationSchema>;
 export type UserLogin = z.infer<typeof userLoginSchema>;
+export type UserProfilePatch = z.infer<typeof userProfilePatchSchema>;
 export type ConfigurationVote = z.infer<typeof configurationVoteSchema>;
 export type RecommendationInput = z.infer<typeof recommendationInputSchema>;
 export type AdminLogin = z.infer<typeof adminLoginSchema>;

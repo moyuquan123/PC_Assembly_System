@@ -7,7 +7,7 @@ import type {
   AdminPartPatch
 } from "@pc-assembly/contracts";
 import type { PublishedConfigurationInput } from "@pc-assembly/contracts";
-import type { UserRegistration } from "@pc-assembly/contracts";
+import type { UserProfilePatch, UserRegistration } from "@pc-assembly/contracts";
 import { seedParts } from "@pc-assembly/domain";
 import type { BuildSummary, CompatibilityResult, Part } from "@pc-assembly/domain";
 import { calculateEngagementMetrics } from "./engagement-ranking.js";
@@ -29,9 +29,51 @@ export interface UserAccount {
   id: string;
   username: string;
   displayName: string;
+  bio: string;
+  location: string;
   passwordHash: string;
   status: "active" | "disabled";
   createdAt: string;
+}
+
+export interface UserDashboard {
+  stats: { publishedCount: number; recommendationsReceived: number; commentsWritten: number };
+  configurations: PublishedConfiguration[];
+  activities: Array<{ type: "comment" | "vote"; configurationKey: string; content?: string; value?: -1 | 1; occurredAt: string }>;
+}
+
+export interface MarketOfferInput {
+  externalId: string;
+  partId: string;
+  title: string;
+  sellerName: string;
+  priceFen: number;
+  productUrl: string;
+  imageUrl: string;
+}
+
+export interface CatalogCandidateInput {
+  externalId: string;
+  categoryCode: "cpu" | "gpu";
+  title: string;
+  brand: string;
+  model: string;
+  priceFen: number;
+  productUrl: string;
+  imageUrl: string;
+}
+
+export interface CatalogFreshness {
+  sourceCode: string;
+  sourceName: string;
+  mode: "live" | "local";
+  status: "idle" | "syncing" | "healthy" | "failed" | "disabled";
+  lastAttemptAt?: string;
+  lastSuccessfulAt?: string;
+  nextSyncAt?: string;
+  updatedParts: number;
+  candidateCount: number;
+  message: string;
 }
 
 export interface UserSession {
@@ -98,6 +140,8 @@ export interface Store {
   getUserByUsername(username: string): Promise<UserAccount | undefined>;
   getUserById(id: string): Promise<UserAccount | undefined>;
   createUser(input: UserRegistration, passwordHash: string): Promise<UserAccount>;
+  updateUserProfile(id: string, input: UserProfilePatch): Promise<UserAccount | undefined>;
+  getUserDashboard(id: string): Promise<UserDashboard>;
   createUserSession(session: UserSession): Promise<void>;
   getUserSession(idHash: string): Promise<UserSession | undefined>;
   deleteUserSession(idHash: string): Promise<void>;
@@ -107,6 +151,10 @@ export interface Store {
   setConfigurationVote(key: string, userId: string, value: -1 | 0 | 1): Promise<void>;
   listConfigurationComments(key: string): Promise<ConfigurationComment[]>;
   addConfigurationComment(key: string, user: UserAccount, content: string): Promise<ConfigurationComment>;
+  getCatalogFreshness(): Promise<CatalogFreshness>;
+  markCatalogSyncStarted(sourceCode: string, sourceName: string, nextSyncAt?: Date): Promise<void>;
+  completeCatalogSync(sourceCode: string, sourceName: string, offers: MarketOfferInput[], candidates: CatalogCandidateInput[], nextSyncAt?: Date): Promise<CatalogFreshness>;
+  failCatalogSync(sourceCode: string, sourceName: string, message: string, nextSyncAt?: Date): Promise<void>;
   getAdminByUsername(username: string): Promise<AdminUser | undefined>;
   getAdminById(id: string): Promise<AdminUser | undefined>;
   upsertAdmin(username: string, passwordHash: string): Promise<AdminUser>;
@@ -128,8 +176,9 @@ export class MemoryStore implements Store {
   private readonly userAccounts = new Map<string, UserAccount>();
   private readonly userSessions = new Map<string, UserSession>();
   private readonly engagement = new Map<string, { impressions: number; clicks: number }>();
-  private readonly votes = new Map<string, -1 | 1>();
+  private readonly votes = new Map<string, { value: -1 | 1; updatedAt: string }>();
   private readonly comments: ConfigurationComment[] = [];
+  private catalogFreshness: CatalogFreshness = { sourceCode: "taobao", sourceName: "淘宝开放平台", mode: "local", status: "disabled", updatedParts: 0, candidateCount: 0, message: "尚未配置授权市场数据源，当前展示本地目录。" };
   readonly audits: Array<Record<string, unknown>> = [];
   readonly events: AnalyticsEventInput[] = [];
 
@@ -216,9 +265,25 @@ export class MemoryStore implements Store {
   async getUserById(id: string): Promise<UserAccount | undefined> { return this.userAccounts.get(id); }
   async createUser(input: UserRegistration, passwordHash: string): Promise<UserAccount> {
     if (await this.getUserByUsername(input.username)) throw new Error("USER_EXISTS");
-    const user: UserAccount = { id: randomUUID(), username: input.username, displayName: input.displayName, passwordHash, status: "active", createdAt: new Date().toISOString() };
+    const user: UserAccount = { id: randomUUID(), username: input.username, displayName: input.displayName, bio: "", location: "", passwordHash, status: "active", createdAt: new Date().toISOString() };
     this.userAccounts.set(user.id, user);
     return structuredClone(user);
+  }
+  async updateUserProfile(id: string, input: UserProfilePatch): Promise<UserAccount | undefined> {
+    const current = this.userAccounts.get(id);
+    if (!current) return undefined;
+    const updated = { ...current, ...input };
+    this.userAccounts.set(id, updated);
+    return structuredClone(updated);
+  }
+  async getUserDashboard(id: string): Promise<UserDashboard> {
+    const configurations = [...this.publishedConfigurations.values()].filter((item) => item.ownerUserId === id).toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const keys = new Set(configurations.map((item) => `community:${item.id}`));
+    const recommendationsReceived = [...this.votes.entries()].filter(([key, vote]) => vote.value === 1 && keys.has(key.split("|")[0]!)).length;
+    const commentsWritten = this.comments.filter((comment) => comment.author.id === id).length;
+    const commentActivities = this.comments.filter((comment) => comment.author.id === id).map((comment) => ({ type: "comment" as const, configurationKey: comment.configurationKey, content: comment.content, occurredAt: comment.createdAt }));
+    const voteActivities = [...this.votes.entries()].filter(([key]) => key.endsWith(`|${id}`)).map(([key, vote]) => ({ type: "vote" as const, configurationKey: key.slice(0, key.lastIndexOf("|")), value: vote.value, occurredAt: vote.updatedAt }));
+    return { stats: { publishedCount: configurations.length, recommendationsReceived, commentsWritten }, configurations: structuredClone(configurations), activities: [...commentActivities, ...voteActivities].toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt)).slice(0, 30) };
   }
   async createUserSession(session: UserSession): Promise<void> { this.userSessions.set(session.idHash, session); }
   async getUserSession(idHash: string): Promise<UserSession | undefined> {
@@ -231,20 +296,33 @@ export class MemoryStore implements Store {
   async listConfigurationEngagement(keys: string[], userId?: string): Promise<ConfigurationEngagement[]> {
     return keys.map((configurationKey) => {
       const counts = this.engagement.get(configurationKey) ?? { impressions: 0, clicks: 0 };
-      const keyVotes = [...this.votes.entries()].filter(([key]) => key.startsWith(`${configurationKey}|`)).map(([, value]) => value);
+      const keyVotes = [...this.votes.entries()].filter(([key]) => key.startsWith(`${configurationKey}|`)).map(([, vote]) => vote.value);
       const recommendCount = keyVotes.filter((value) => value === 1).length;
       const notRecommendCount = keyVotes.filter((value) => value === -1).length;
       const commentCount = this.comments.filter((comment) => comment.configurationKey === configurationKey).length;
-      return { configurationKey, ...calculateEngagementMetrics({ recommendCount, notRecommendCount, commentCount, impressionCount: counts.impressions, clickCount: counts.clicks }), myVote: userId ? this.votes.get(`${configurationKey}|${userId}`) ?? 0 : 0 };
+      return { configurationKey, ...calculateEngagementMetrics({ recommendCount, notRecommendCount, commentCount, impressionCount: counts.impressions, clickCount: counts.clicks }), myVote: userId ? this.votes.get(`${configurationKey}|${userId}`)?.value ?? 0 : 0 };
     });
   }
   async addConfigurationImpressions(keys: string[]): Promise<void> {
     for (const key of new Set(keys)) { const current = this.engagement.get(key) ?? { impressions: 0, clicks: 0 }; this.engagement.set(key, { ...current, impressions: current.impressions + 1 }); }
   }
   async addConfigurationClick(key: string): Promise<void> { const current = this.engagement.get(key) ?? { impressions: 0, clicks: 0 }; this.engagement.set(key, { ...current, clicks: current.clicks + 1 }); }
-  async setConfigurationVote(key: string, userId: string, value: -1 | 0 | 1): Promise<void> { const voteKey = `${key}|${userId}`; if (value === 0) this.votes.delete(voteKey); else this.votes.set(voteKey, value); }
+  async setConfigurationVote(key: string, userId: string, value: -1 | 0 | 1): Promise<void> { const voteKey = `${key}|${userId}`; if (value === 0) this.votes.delete(voteKey); else this.votes.set(voteKey, { value, updatedAt: new Date().toISOString() }); }
   async listConfigurationComments(key: string): Promise<ConfigurationComment[]> { return this.comments.filter((comment) => comment.configurationKey === key).toSorted((a, b) => b.createdAt.localeCompare(a.createdAt)).map((comment) => structuredClone(comment)); }
   async addConfigurationComment(key: string, user: UserAccount, content: string): Promise<ConfigurationComment> { const comment = { id: randomUUID(), configurationKey: key, author: { id: user.id, displayName: user.displayName }, content, createdAt: new Date().toISOString() }; this.comments.push(comment); return structuredClone(comment); }
+  async getCatalogFreshness(): Promise<CatalogFreshness> { return structuredClone(this.catalogFreshness); }
+  async markCatalogSyncStarted(sourceCode: string, sourceName: string, nextSyncAt?: Date): Promise<void> {
+    this.catalogFreshness = { ...this.catalogFreshness, sourceCode, sourceName, mode: "live", status: "syncing", lastAttemptAt: new Date().toISOString(), ...(nextSyncAt ? { nextSyncAt: nextSyncAt.toISOString() } : {}), message: "正在同步最新市场数据。" };
+  }
+  async completeCatalogSync(sourceCode: string, sourceName: string, offers: MarketOfferInput[], candidates: CatalogCandidateInput[], nextSyncAt?: Date): Promise<CatalogFreshness> {
+    for (const offer of offers) { const part = this.parts.get(offer.partId); if (part) this.parts.set(part.id, { ...part, priceFen: offer.priceFen, imageUrl: part.imageUrl || offer.imageUrl, updatedAt: new Date().toISOString() }); }
+    const now = new Date().toISOString();
+    this.catalogFreshness = { sourceCode, sourceName, mode: "live", status: "healthy", lastAttemptAt: now, lastSuccessfulAt: now, ...(nextSyncAt ? { nextSyncAt: nextSyncAt.toISOString() } : {}), updatedParts: offers.length, candidateCount: candidates.length, message: `已同步 ${offers.length} 个配件报价，发现 ${candidates.length} 个待审核候选。` };
+    return structuredClone(this.catalogFreshness);
+  }
+  async failCatalogSync(sourceCode: string, sourceName: string, message: string, nextSyncAt?: Date): Promise<void> {
+    this.catalogFreshness = { ...this.catalogFreshness, sourceCode, sourceName, mode: "live", status: "failed", lastAttemptAt: new Date().toISOString(), ...(nextSyncAt ? { nextSyncAt: nextSyncAt.toISOString() } : {}), message };
+  }
 
   async getAdminByUsername(username: string): Promise<AdminUser | undefined> {
     return [...this.users.values()].find((user) => user.username === username);

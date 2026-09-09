@@ -12,17 +12,22 @@ function apiResponse(data: unknown, status = 200) {
 
 function installApiMock() {
   const publishedConfigurations: unknown[] = [];
-  let currentUser: { id: string; username: string; displayName: string; createdAt: string } | undefined;
+  let currentUser: { id: string; username: string; displayName: string; bio: string; location: string; createdAt: string } | undefined;
   const engagement = { configurationKey: "official:amd-office-entry", recommendCount: 0, notRecommendCount: 0, commentCount: 0, impressionCount: 0, clickCount: 0, clickRate: 0, hybridScore: 20, myVote: 0 };
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/v1/categories") return apiResponse(categories);
     if (url === "/api/v1/parts") return apiResponse(seedParts);
+    if (url === "/api/v1/catalog/freshness") return apiResponse({ sourceCode: "taobao", sourceName: "淘宝开放平台", mode: "local", status: "disabled", updatedParts: 0, candidateCount: 0, message: "当前展示本地目录。" });
     if (url === "/api/v1/events") return apiResponse({ accepted: true }, 201);
+    if (url === "/api/v1/users/me" && init?.method === "PATCH") {
+      const payload = JSON.parse(String(init.body)); currentUser = { ...currentUser!, ...payload }; return apiResponse(currentUser);
+    }
     if (url === "/api/v1/users/me") return currentUser ? apiResponse(currentUser) : apiResponse({ code: "USER_AUTH_REQUIRED", message: "请先登录" }, 401);
+    if (url === "/api/v1/users/me/dashboard") return currentUser ? apiResponse({ stats: { publishedCount: publishedConfigurations.length, recommendationsReceived: 0, commentsWritten: 0 }, configurations: publishedConfigurations, activities: [] }) : apiResponse({ code: "USER_AUTH_REQUIRED", message: "请先登录" }, 401);
     if (url === "/api/v1/users" && init?.method === "POST") {
       const payload = JSON.parse(String(init.body));
-      currentUser = { id: "00000000-0000-4000-8000-000000000010", username: payload.username, displayName: payload.displayName, createdAt: new Date().toISOString() };
+      currentUser = { id: "00000000-0000-4000-8000-000000000010", username: payload.username, displayName: payload.displayName, bio: "", location: "", createdAt: new Date().toISOString() };
       return apiResponse(currentUser, 201);
     }
     if (url === "/api/v1/user-sessions" && init?.method === "POST") return currentUser ? apiResponse(currentUser) : apiResponse({ code: "USER_CREDENTIALS_INVALID", message: "用户名或密码不正确" }, 401);
@@ -105,15 +110,37 @@ describe("PC assembly product flow", () => {
     expect(within(screen.getByRole("group", { name: "品牌筛选" })).getByRole("button", { name: "华硕" })).toBeInTheDocument();
   });
 
-  it("saves a versioned local draft and shows it under My Builds", async () => {
+  it("saves a versioned local draft and shows it in the personal center", async () => {
     const user = userEvent.setup(); renderApp();
     await user.click(screen.getByRole("button", { name: /开始选择配件/ }));
     await screen.findByRole("heading", { name: "选择CPU" });
     await user.click(screen.getByRole("button", { name: "保存配置" }));
     expect(screen.getByRole("status")).toHaveTextContent("配置已保存到当前浏览器");
     expect(JSON.parse(window.localStorage.getItem("pc-assembly-build-draft")!).schemaVersion).toBe(1);
-    await user.click(screen.getByRole("link", { name: "我的配置" }));
-    expect(screen.getByRole("heading", { name: "我的游戏主机" })).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "我的" }));
+    await user.click(within(screen.getByRole("main")).getByRole("button", { name: "登录 / 注册" }));
+    await user.click(screen.getByRole("tab", { name: "注册" }));
+    await user.type(screen.getByLabelText("用户名"), "saved_user");
+    await user.type(screen.getByLabelText("显示名称"), "保存用户");
+    await user.type(screen.getByLabelText("密码"), "Password123!");
+    await user.click(screen.getByRole("button", { name: "创建账号" }));
+    expect(screen.getByText("我的游戏主机")).toBeInTheDocument();
+  });
+
+  it("updates normal profile information from My", async () => {
+    const user = userEvent.setup(); renderApp("/me");
+    await user.click(within(screen.getByRole("main")).getByRole("button", { name: "登录 / 注册" }));
+    await user.click(screen.getByRole("tab", { name: "注册" }));
+    await user.type(screen.getByLabelText("用户名"), "profile_user");
+    await user.type(screen.getByLabelText("显示名称"), "资料用户");
+    await user.type(screen.getByLabelText("密码"), "Password123!");
+    await user.click(screen.getByRole("button", { name: "创建账号" }));
+    await user.click(screen.getByRole("button", { name: "编辑资料" }));
+    await user.type(screen.getByLabelText("所在地（选填）"), "上海");
+    await user.type(screen.getByLabelText("个人简介（选填）"), "热爱电脑硬件");
+    await user.click(screen.getByRole("button", { name: "保存资料" }));
+    expect(await screen.findByText("资料已更新")).toBeInTheDocument();
+    expect((await screen.findAllByText("热爱电脑硬件")).length).toBeGreaterThanOrEqual(1);
   });
 
   it("generates a server-backed share link for a complete compatible build", async () => {

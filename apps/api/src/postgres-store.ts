@@ -1,9 +1,9 @@
-import type { AnalyticsEventInput, BuildInput, PartsQuery, AdminPartCreate, AdminPartPatch, PublishedConfigurationInput, UserRegistration } from "@pc-assembly/contracts";
+import type { AnalyticsEventInput, BuildInput, PartsQuery, AdminPartCreate, AdminPartPatch, PublishedConfigurationInput, UserProfilePatch, UserRegistration } from "@pc-assembly/contracts";
 import type { BuildSummary, CompatibilityResult, Part, PartSpecs } from "@pc-assembly/domain";
 import postgres from "postgres";
 import type { Sql } from "postgres";
 import { calculateEngagementMetrics } from "./engagement-ranking.js";
-import type { AdminSession, AdminUser, ConfigurationComment, ConfigurationEngagement, PublishedConfiguration, Store, StoredBuild, UserAccount, UserSession } from "./store.js";
+import type { AdminSession, AdminUser, CatalogCandidateInput, CatalogFreshness, ConfigurationComment, ConfigurationEngagement, MarketOfferInput, PublishedConfiguration, Store, StoredBuild, UserAccount, UserDashboard, UserSession } from "./store.js";
 
 interface BasePartRow {
   id: string; category: Part["category"]; brand: string; model: string; name: string;
@@ -157,16 +157,34 @@ export class PostgresStore implements Store {
     return { ...row, createdAt: new Date(row.createdAt).toISOString() } as PublishedConfiguration;
   }
 
-  async getUserByUsername(username: string): Promise<UserAccount | undefined> { const [u] = await this.sql<any[]>`SELECT id,username,display_name AS "displayName",password_hash AS "passwordHash",status,created_at AS "createdAt" FROM user_accounts WHERE username=${username}`; return u ? { ...u, createdAt: new Date(u.createdAt).toISOString() } : undefined; }
-  async getUserById(id: string): Promise<UserAccount | undefined> { const [u] = await this.sql<any[]>`SELECT id,username,display_name AS "displayName",password_hash AS "passwordHash",status,created_at AS "createdAt" FROM user_accounts WHERE id=${id}`; return u ? { ...u, createdAt: new Date(u.createdAt).toISOString() } : undefined; }
+  async getUserByUsername(username: string): Promise<UserAccount | undefined> { const [u] = await this.sql<any[]>`SELECT id,username,display_name AS "displayName",bio,location,password_hash AS "passwordHash",status,created_at AS "createdAt" FROM user_accounts WHERE username=${username}`; return u ? { ...u, createdAt: new Date(u.createdAt).toISOString() } : undefined; }
+  async getUserById(id: string): Promise<UserAccount | undefined> { const [u] = await this.sql<any[]>`SELECT id,username,display_name AS "displayName",bio,location,password_hash AS "passwordHash",status,created_at AS "createdAt" FROM user_accounts WHERE id=${id}`; return u ? { ...u, createdAt: new Date(u.createdAt).toISOString() } : undefined; }
   async createUser(input: UserRegistration, passwordHash: string): Promise<UserAccount> {
     try {
-      const [u] = await this.sql<any[]>`INSERT INTO user_accounts (username,display_name,password_hash) VALUES (${input.username},${input.displayName},${passwordHash}) RETURNING id,username,display_name AS "displayName",password_hash AS "passwordHash",status,created_at AS "createdAt"`;
+      const [u] = await this.sql<any[]>`INSERT INTO user_accounts (username,display_name,password_hash) VALUES (${input.username},${input.displayName},${passwordHash}) RETURNING id,username,display_name AS "displayName",bio,location,password_hash AS "passwordHash",status,created_at AS "createdAt"`;
       return { ...u, createdAt: new Date(u.createdAt).toISOString() };
     } catch (error: any) {
       if (error?.code === "23505") throw new Error("USER_EXISTS");
       throw error;
     }
+  }
+  async updateUserProfile(id: string, input: UserProfilePatch): Promise<UserAccount | undefined> {
+    const [u] = await this.sql<any[]>`UPDATE user_accounts SET display_name=${input.displayName},bio=${input.bio},location=${input.location} WHERE id=${id} RETURNING id,username,display_name AS "displayName",bio,location,password_hash AS "passwordHash",status,created_at AS "createdAt"`;
+    return u ? { ...u, createdAt: new Date(u.createdAt).toISOString() } : undefined;
+  }
+  async getUserDashboard(id: string): Promise<UserDashboard> {
+    const [configurations, statRows, commentRows, voteRows] = await Promise.all([
+      this.sql<any[]>`SELECT id,owner_user_id AS "ownerUserId",author_name AS "authorName",name,configuration_class AS "configurationClass",description,selected_part_ids AS "selectedPartIds",parts_snapshot AS parts,checks_snapshot AS checks,summary_snapshot AS summary,created_at AS "createdAt" FROM published_configurations WHERE owner_user_id=${id} ORDER BY created_at DESC LIMIT 100`,
+      this.sql<any[]>`SELECT (SELECT count(*) FROM published_configurations WHERE owner_user_id=${id}) AS "publishedCount",(SELECT count(*) FROM configuration_comments WHERE user_id=${id}) AS "commentsWritten",(SELECT count(*) FROM configuration_votes v JOIN published_configurations p ON v.configuration_key=('community:' || p.id::text) WHERE p.owner_user_id=${id} AND v.value=1) AS "recommendationsReceived"`,
+      this.sql<any[]>`SELECT configuration_key AS "configurationKey",content,created_at AS "occurredAt" FROM configuration_comments WHERE user_id=${id} ORDER BY created_at DESC LIMIT 30`,
+      this.sql<any[]>`SELECT configuration_key AS "configurationKey",value,updated_at AS "occurredAt" FROM configuration_votes WHERE user_id=${id} ORDER BY updated_at DESC LIMIT 30`
+    ]);
+    const stats = statRows[0] ?? {};
+    const activities = [
+      ...commentRows.map((row) => ({ type: "comment" as const, configurationKey: row.configurationKey, content: row.content, occurredAt: new Date(row.occurredAt).toISOString() })),
+      ...voteRows.map((row) => ({ type: "vote" as const, configurationKey: row.configurationKey, value: Number(row.value) as -1 | 1, occurredAt: new Date(row.occurredAt).toISOString() }))
+    ].toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt)).slice(0, 30);
+    return { stats: { publishedCount: Number(stats.publishedCount ?? 0), recommendationsReceived: Number(stats.recommendationsReceived ?? 0), commentsWritten: Number(stats.commentsWritten ?? 0) }, configurations: configurations.map((row) => ({ ...row, createdAt: new Date(row.createdAt).toISOString() })) as PublishedConfiguration[], activities };
   }
   async createUserSession(session: UserSession): Promise<void> { await this.sql`INSERT INTO user_sessions (id_hash,user_id,expires_at) VALUES (${session.idHash},${session.userId},${session.expiresAt})`; }
   async getUserSession(idHash: string): Promise<UserSession | undefined> { const [s] = await this.sql<any[]>`SELECT id_hash AS "idHash",user_id AS "userId",expires_at AS "expiresAt" FROM user_sessions WHERE id_hash=${idHash} AND expires_at>now()`; return s; }
@@ -212,6 +230,33 @@ export class PostgresStore implements Store {
   async addConfigurationComment(key: string, user: UserAccount, content: string): Promise<ConfigurationComment> {
     const [row] = await this.sql<any[]>`INSERT INTO configuration_comments (configuration_key,user_id,content) VALUES (${key},${user.id},${content}) RETURNING id,configuration_key AS "configurationKey",content,created_at AS "createdAt"`;
     return { ...row, createdAt: new Date(row.createdAt).toISOString(), author: { id: user.id, displayName: user.displayName } };
+  }
+
+  async getCatalogFreshness(): Promise<CatalogFreshness> {
+    const [row] = await this.sql<any[]>`SELECT code AS "sourceCode",display_name AS "sourceName",status,last_attempt_at AS "lastAttemptAt",last_success_at AS "lastSuccessfulAt",next_sync_at AS "nextSyncAt",updated_parts AS "updatedParts",candidate_count AS "candidateCount",last_error AS "lastError" FROM catalog_sources WHERE code='taobao'`;
+    if (!row) return { sourceCode: "taobao", sourceName: "淘宝开放平台", mode: "local", status: "disabled", updatedParts: 0, candidateCount: 0, message: "尚未配置授权市场数据源，当前展示本地目录。" };
+    return { sourceCode: row.sourceCode, sourceName: row.sourceName, mode: row.status === "disabled" ? "local" : "live", status: row.status, ...(row.lastAttemptAt ? { lastAttemptAt: new Date(row.lastAttemptAt).toISOString() } : {}), ...(row.lastSuccessfulAt ? { lastSuccessfulAt: new Date(row.lastSuccessfulAt).toISOString() } : {}), ...(row.nextSyncAt ? { nextSyncAt: new Date(row.nextSyncAt).toISOString() } : {}), updatedParts: Number(row.updatedParts), candidateCount: Number(row.candidateCount), message: row.status === "healthy" ? `已同步 ${row.updatedParts} 个配件报价，发现 ${row.candidateCount} 个待审核候选。` : row.status === "failed" ? "市场数据同步失败，当前继续使用上一份可用目录。" : row.status === "disabled" ? "尚未配置授权市场数据源，当前展示本地目录。" : "市场数据等待同步。" };
+  }
+  async markCatalogSyncStarted(sourceCode: string, sourceName: string, nextSyncAt?: Date): Promise<void> {
+    await this.sql`INSERT INTO catalog_sources (code,display_name,status,last_attempt_at,next_sync_at,last_error) VALUES (${sourceCode},${sourceName},'syncing',now(),${nextSyncAt ?? null},null) ON CONFLICT (code) DO UPDATE SET display_name=EXCLUDED.display_name,status='syncing',last_attempt_at=now(),next_sync_at=EXCLUDED.next_sync_at,last_error=null,updated_at=now()`;
+  }
+  async completeCatalogSync(sourceCode: string, sourceName: string, offers: MarketOfferInput[], candidates: CatalogCandidateInput[], nextSyncAt?: Date): Promise<CatalogFreshness> {
+    await this.sql.begin(async (tx) => {
+      for (const offer of offers) {
+        await tx`INSERT INTO part_market_offers (source_code,external_id,part_id,title,seller_name,price_fen,product_url,image_url,fetched_at) VALUES (${sourceCode},${offer.externalId},${offer.partId},${offer.title},${offer.sellerName},${offer.priceFen},${offer.productUrl},${offer.imageUrl},now()) ON CONFLICT (source_code,external_id) DO UPDATE SET part_id=EXCLUDED.part_id,title=EXCLUDED.title,seller_name=EXCLUDED.seller_name,price_fen=EXCLUDED.price_fen,product_url=EXCLUDED.product_url,image_url=EXCLUDED.image_url,fetched_at=now()`;
+        await tx`UPDATE parts SET price_fen=${offer.priceFen},image_key=CASE WHEN image_key='' THEN ${offer.imageUrl} ELSE image_key END,updated_at=now() WHERE id=${offer.partId}`;
+      }
+      for (const candidate of candidates) await tx`INSERT INTO catalog_sync_candidates (source_code,external_id,category_code,title,brand,model,price_fen,product_url,image_url) VALUES (${sourceCode},${candidate.externalId},${candidate.categoryCode},${candidate.title},${candidate.brand},${candidate.model},${candidate.priceFen},${candidate.productUrl},${candidate.imageUrl}) ON CONFLICT (source_code,external_id) DO UPDATE SET title=EXCLUDED.title,brand=EXCLUDED.brand,model=EXCLUDED.model,price_fen=EXCLUDED.price_fen,product_url=EXCLUDED.product_url,image_url=EXCLUDED.image_url,last_seen_at=now()`;
+      await tx`INSERT INTO catalog_sync_runs (source_code,status,finished_at,fetched_count,updated_parts,candidate_count) VALUES (${sourceCode},'succeeded',now(),${offers.length + candidates.length},${offers.length},${candidates.length})`;
+      await tx`UPDATE catalog_sources SET display_name=${sourceName},status='healthy',last_attempt_at=now(),last_success_at=now(),next_sync_at=${nextSyncAt ?? null},last_error=null,updated_parts=${offers.length},candidate_count=${candidates.length},updated_at=now() WHERE code=${sourceCode}`;
+    });
+    return this.getCatalogFreshness();
+  }
+  async failCatalogSync(sourceCode: string, sourceName: string, message: string, nextSyncAt?: Date): Promise<void> {
+    await this.sql.begin(async (tx) => {
+      await tx`INSERT INTO catalog_sources (code,display_name,status,last_attempt_at,next_sync_at,last_error) VALUES (${sourceCode},${sourceName},'failed',now(),${nextSyncAt ?? null},${message}) ON CONFLICT (code) DO UPDATE SET display_name=EXCLUDED.display_name,status='failed',last_attempt_at=now(),next_sync_at=EXCLUDED.next_sync_at,last_error=EXCLUDED.last_error,updated_at=now()`;
+      await tx`INSERT INTO catalog_sync_runs (source_code,status,finished_at,error_message) VALUES (${sourceCode},'failed',now(),${message})`;
+    });
   }
 
   async getAdminByUsername(username: string): Promise<AdminUser | undefined> { const [u] = await this.sql<any[]>`SELECT id,username,password_hash AS "passwordHash",status FROM admin_users WHERE username=${username}`; return u; }

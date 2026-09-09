@@ -22,6 +22,8 @@ $requiredPatterns = @(
     "Node.js 24 LTS.*Fastify 5",
     "PostgreSQL 17",
     "POST /api/v1/recommendations",
+    "PATCH /api/v1/users/me",
+    "catalog_sync_candidates",
     "recommendationVersion",
     "cloud.tencent.com",
     "help.aliyun.com"
