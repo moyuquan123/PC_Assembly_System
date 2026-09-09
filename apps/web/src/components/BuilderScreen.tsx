@@ -3,7 +3,6 @@ import { useMemo, useState } from "react";
 import { categories, checkCompatibility, summarizeBuild } from "@pc-assembly/domain";
 import type { BuildDraft, CategoryCode, Part } from "@pc-assembly/domain";
 import BuildModal from "./BuildModal";
-import ConfigurationOverview from "./ConfigurationOverview";
 import PartDetailModal from "./PartDetailModal";
 import ProductCatalog from "./ProductCatalog";
 import StepRail from "./StepRail";
@@ -37,14 +36,8 @@ export default function BuilderScreen({ draft, parts, loading, error, onChoose, 
     if (next) setActiveCategoryId(next.code);
   };
 
-  const selectFromOverview = (category: CategoryCode) => {
-    setActiveCategoryId(category);
-    document.getElementById("catalog-title")?.scrollIntoView?.({ block: "start", behavior: "smooth" });
-  };
-
   return <main className="builder-screen">
     <section className="setup-strip" aria-label="装机目标摘要"><button type="button" onClick={onEditSetup}><span>预算</span><strong>{formatYuan(draft.budgetFen)}</strong><PencilLine size={16} /></button><div><Gamepad2 size={21} /><span>用途</span><strong>{draft.usage}</strong></div><div className="progress-summary"><Gauge size={21} /><span>装机进度</span><strong>{build.progress} / {categories.length}</strong><i><b style={{ width: `${(build.progress / categories.length) * 100}%` }} /></i></div></section>
-    {!loading && !error ? <ConfigurationOverview build={build} budgetFen={draft.budgetFen} buildName={draft.name} activeCategoryId={activeCategoryId} issues={issues} onSelectCategory={selectFromOverview} onOpen={() => setIsSummaryOpen(true)} /> : null}
     {loading ? <section className="page-state"><LoaderLabel text="正在加载配件目录…" /></section> : error ? <section className="page-state error-state"><h1>配件目录加载失败</h1><p>{error}</p><button type="button" onClick={() => window.location.reload()}>重新加载</button></section> : <div className="builder-layout">
       <StepRail categories={categories} activeId={activeCategoryId} selection={draft.selectedPartIds} onSelect={setActiveCategoryId} />
       <ProductCatalog key={activeCategory.code} category={activeCategory} products={parts.filter((part) => part.category === activeCategoryId)} selectedId={draft.selectedPartIds[activeCategoryId]} snapshot={snapshot} onChoose={choose} onOpenDetail={setDetailPart} />

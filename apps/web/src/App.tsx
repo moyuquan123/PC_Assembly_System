@@ -8,6 +8,7 @@ import AdminLoginScreen from "./components/AdminLoginScreen";
 import AdminPartsScreen from "./components/AdminPartsScreen";
 import AppHeader from "./components/AppHeader";
 import BuilderScreen from "./components/BuilderScreen";
+import ConfigurationLibraryScreen from "./components/ConfigurationLibraryScreen";
 import RecommendationScreen from "./components/RecommendationScreen";
 import SavedScreen from "./components/SavedScreen";
 import SetupScreen from "./components/SetupScreen";
@@ -15,6 +16,7 @@ import SharedBuildScreen from "./components/SharedBuildScreen";
 import { ApiClientError, createAdminPart, createSharedBuild, getAdminParts, getCategories, getParts, getSharedBuild, loginAdmin, sendEvent, updateAdminPart } from "./lib/api";
 import { createDraft, DRAFT_STORAGE_KEY, readDraft, updateSelection, updateSetup, writeDraft } from "./lib/draft";
 import { formatYuan } from "./lib/format";
+import type { MarketConfiguration } from "./lib/configuration-library";
 
 const anonymousIdKey = "pc-assembly-anonymous-id";
 
@@ -83,11 +85,25 @@ export default function App() {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     navigate("/builder");
   };
+  const applyLibraryConfiguration = (configuration: MarketConfiguration) => {
+    const next: BuildDraft = {
+      ...createDraft(),
+      name: configuration.name,
+      budgetFen: configuration.referenceBudgetFen,
+      usage: configuration.configurationClass === "办公入门" ? "办公" : configuration.configurationClass === "内容创作" ? "内容创作" : "游戏",
+      selectedPartIds: { ...configuration.selectedPartIds },
+      updatedAt: new Date().toISOString()
+    };
+    persist(next, "配置库方案已导入，可继续调整配件");
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    navigate("/builder");
+  };
 
   return <div className="app-shell"><AppHeader onSave={saveCurrent} />
     <Routes>
       <Route path="/" element={<SetupScreen draft={draft} hasSavedDraft={Boolean(savedDraft)} onStart={start} onContinue={() => { if (savedDraft) setDraft(savedDraft); navigate("/builder"); }} />} />
       <Route path="/builder" element={<BuilderScreen draft={draft} parts={parts} loading={partsQuery.isLoading} error={partsQuery.error ? errorMessage(partsQuery.error) : ""} onChoose={choose} onEditSetup={() => navigate("/")} onCopy={copyBuild} onShare={shareBuild} />} />
+      <Route path="/configurations" element={<ConfigurationLibraryScreen parts={parts} loading={partsQuery.isLoading} error={partsQuery.error ? errorMessage(partsQuery.error) : ""} onApply={applyLibraryConfiguration} />} />
       <Route path="/recommend" element={<RecommendationScreen onGenerated={(input, resultCount) => track({ eventName: "recommendation_generated", properties: { usage: input.usage, budgetRange: budgetRange(input.budgetFen), resultCount } })} onApply={applyRecommendation} />} />
       <Route path="/saved" element={<SavedScreen savedDraft={savedDraft} parts={parts} onOpen={() => { if (savedDraft) setDraft(savedDraft); navigate("/builder"); }} onStart={() => navigate("/")} />} />
       <Route path="/builds/:shareCode" element={<SharedRoute />} />

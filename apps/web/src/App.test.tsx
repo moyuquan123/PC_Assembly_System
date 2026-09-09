@@ -61,18 +61,23 @@ describe("PC assembly product flow", () => {
     expect(screen.getByRole("heading", { name: "选择显卡" })).toBeInTheDocument();
   });
 
-  it("shows a live configuration overview and uses it to switch categories", async () => {
+  it("filters the configuration library and imports a complete template", async () => {
     const user = userEvent.setup();
-    window.localStorage.setItem("pc-assembly-build-draft", JSON.stringify({ schemaVersion: 1, name: "总览测试", budgetFen: 800000, usage: "游戏", selectedPartIds: { cpu: "cpu-7600x" }, updatedAt: new Date().toISOString() }));
-    renderApp("/builder");
+    renderApp("/configurations");
 
     expect(await screen.findByRole("heading", { name: "配置总览" })).toBeInTheDocument();
-    expect(screen.getByText("总览测试 · 已完成 1 / 8")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "查看CPU：AMD 锐龙 5 7600X" })).toBeInTheDocument();
-    expect(screen.getAllByText("待选择")).toHaveLength(7);
+    expect(screen.getByRole("heading", { name: "共 8 套方案" })).toBeInTheDocument();
+    await user.click(within(screen.getByRole("group", { name: "品牌平台" })).getByRole("button", { name: "AMD" }));
+    await user.click(within(screen.getByRole("group", { name: "配置分类" })).getByRole("button", { name: "内容创作" }));
+    expect(screen.getByRole("heading", { name: "共 1 套方案" })).toBeInTheDocument();
+    expect(screen.getByText("AMD 内容创作配置")).toBeInTheDocument();
+    expect(screen.queryByText("Intel 内容创作配置")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "选择显卡配件" }));
-    expect(screen.getByRole("heading", { name: "选择显卡" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看配置" }));
+    expect(screen.getByRole("dialog", { name: "AMD 内容创作配置" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "采用此配置" }));
+    expect(await screen.findByRole("heading", { name: "选择CPU" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("配置库方案已导入");
   });
 
   it("saves a versioned local draft and shows it under My Builds", async () => {

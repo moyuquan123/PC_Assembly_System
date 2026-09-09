@@ -12,8 +12,6 @@ test("creates a compatible build and opens its server-backed share page", async 
   await page.getByRole("button", { name: "开始选择配件" }).click();
 
   await expect(page.getByRole("heading", { name: "选择CPU" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "配置总览" })).toBeVisible();
-  await expect(page.getByText("自动化验收主机 · 已完成 0 / 8")).toBeVisible();
   await page.getByRole("button", { name: "选择", exact: true }).nth(1).click();
   await expect(page.getByRole("button", { name: "不兼容" }).first()).toBeDisabled();
 
@@ -55,8 +53,6 @@ test("generates a smart recommendation and imports it into the builder", async (
 
   await expect(page.getByRole("heading", { name: "选择CPU" })).toBeVisible();
   await expect(page.getByText("推荐配置已导入，可继续调整配件")).toBeVisible();
-  await expect(page.getByText("均衡方案 · 内容创作主机 · 已完成 8 / 8")).toBeVisible();
-  await expect(page.getByRole("button", { name: /查看CPU：/ })).toBeVisible();
   const importedMobileSummary = page.locator(".mobile-summary-button");
   if (await importedMobileSummary.isVisible()) {
     await importedMobileSummary.click();
@@ -64,5 +60,33 @@ test("generates a smart recommendation and imports it into the builder", async (
     await expect(page.locator(".modal-build-row:not(.missing)")).toHaveCount(8);
   } else {
     await expect(page.getByText("8 / 8").first()).toBeVisible();
+  }
+});
+
+test("filters the configuration library and adopts a complete build", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("link", { name: "配置总览" }).click();
+  await expect(page).toHaveURL(/\/configurations$/);
+  await expect(page.getByRole("heading", { name: "配置总览" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "共 8 套方案" })).toBeVisible();
+
+  await page.getByRole("group", { name: "品牌平台" }).getByRole("button", { name: "Intel" }).click();
+  await page.getByRole("group", { name: "配置分类" }).getByRole("button", { name: "主流游戏" }).click();
+  await expect(page.getByRole("heading", { name: "共 1 套方案" })).toBeVisible();
+  const row = page.getByRole("row", { name: /Intel 主流游戏配置/ });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "查看配置" }).click();
+  await expect(page.getByRole("dialog", { name: "Intel 主流游戏配置" })).toBeVisible();
+  await page.getByRole("button", { name: "采用此配置" }).click();
+
+  await expect(page.getByRole("heading", { name: "选择CPU" })).toBeVisible();
+  await expect(page.getByText("配置库方案已导入，可继续调整配件")).toBeVisible();
+  const progress = page.locator(".progress-summary");
+  if (await progress.isVisible()) {
+    await expect(progress).toContainText("8 / 8");
+  } else {
+    await page.locator(".mobile-summary-button").click();
+    await expect(page.getByRole("dialog", { name: "Intel 主流游戏配置" })).toBeVisible();
+    await expect(page.locator(".modal-build-row:not(.missing)")).toHaveCount(8);
   }
 });
